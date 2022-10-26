@@ -987,6 +987,34 @@ func (n *node) requestCompaction() (*SysOpState, error) {
 	return nil, ErrRejected
 }
 
+// requestImportSnapshot commits the snapshot and then compact logs
+// just before the snapshot index.
+func (n *node) requestImportSnapshot(ss pb.Snapshot) error {
+	req := rsm.SSRequest{
+		OverrideCompaction: true,
+		// Compact log entries at index just before snapshot index.
+		CompactionIndex: ss.Index - 1,
+	}
+	if err := n.snapshotter.Commit(ss, req); err != nil {
+		if snapshotCommitAborted(err) || saveAborted(err) {
+			return nil
+		}
+		return errors.Wrapf(err, "%s commit snapshot failed", n.id())
+	}
+	if !ss.Validate(n.snapshotter.fs) {
+		plog.Panicf("%s generated invalid snapshot %v", n.id(), ss)
+	}
+	if err := n.logReader.CreateSnapshot(ss); err != nil {
+		if isSoftSnapshotError(err) {
+			return nil
+		}
+		return errors.Wrapf(err, "%s create snapshot failed", n.id())
+	}
+	n.compactLog(req, ss.Index)
+	n.ss.setIndex(ss.Index)
+	return nil
+}
+
 func isFreeOrderMessage(m pb.Message) bool {
 	return m.Type == pb.Replicate || m.Type == pb.Ping
 }

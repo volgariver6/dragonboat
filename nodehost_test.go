@@ -4375,6 +4375,128 @@ func TestShardWithoutQuorumCanBeRestoreByImportingSnapshot(t *testing.T) {
 	runNodeHostTestDC(t, tf, true, fs)
 }
 
+func TestRequestImportSnapshotAndQueryLog(t *testing.T) {
+	if vfs.GetTestFS() != vfs.DefaultFS {
+		t.Skip("not using the default fs")
+		return
+	}
+	fs := vfs.GetTestFS()
+	tf := func() {
+		rc := config.Config{
+			ShardID:                 1,
+			ReplicaID:               1,
+			ElectionRTT:             3,
+			HeartbeatRTT:            1,
+			CheckQuorum:             true,
+			CompactionOverhead:      2,
+			SnapshotCompressionType: config.NoCompression,
+		}
+		peers := make(map[uint64]string)
+		peers[1] = nodeHostTestAddr1
+		nhc := config.NodeHostConfig{
+			DeploymentID:   1,
+			NodeHostDir:    singleNodeHostTestDir,
+			RTTMillisecond: getRTTMillisecond(fs, singleNodeHostTestDir),
+			RaftAddress:    nodeHostTestAddr1,
+			Expert:         getTestExpertConfig(fs),
+		}
+		nh, err := NewNodeHost(nhc)
+		if err != nil {
+			t.Fatalf("failed to create node host %v", err)
+		}
+		pto := lpto(nh)
+		newSM := func(uint64, uint64) sm.IOnDiskStateMachine {
+			return tests.NewSimDiskSM(0)
+		}
+		if err := nh.StartOnDiskReplica(peers, false, newSM, rc); err != nil {
+			t.Fatalf("failed to start shard %v", err)
+		}
+		waitForLeaderToBeElected(t, nh, 1)
+		makeProposals := func(nn *NodeHost) {
+			session := nn.GetNoOPSession(1)
+			for i := 0; i < 16; i++ {
+				ctx, cancel := context.WithTimeout(context.Background(), pto)
+				_, err := nn.SyncPropose(ctx, session, []byte("test-data"))
+				cancel()
+				if err != nil {
+					t.Errorf("failed to make proposal %v", err)
+				}
+			}
+		}
+		makeProposals(nh)
+		sspath := "exported_snapshot_safe_to_delete"
+		if err := fs.RemoveAll(sspath); err != nil {
+			t.Fatalf("%v", err)
+		}
+		if err := fs.MkdirAll(sspath, 0755); err != nil {
+			t.Fatalf("%v", err)
+		}
+		defer func() {
+			if err := fs.RemoveAll(sspath); err != nil {
+				t.Fatalf("%v", err)
+			}
+		}()
+		opt := SnapshotOption{
+			Exported:   true,
+			ExportPath: sspath,
+		}
+		var index uint64
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			index, err = nh.SyncRequestSnapshot(ctx, 1, opt)
+			cancel()
+			if err != nil {
+				if errors.Is(ErrRejected, err) {
+					time.Sleep(500 * time.Millisecond)
+					continue
+				}
+				t.Fatalf("failed to sync request snapshot %v", err)
+			}
+			break
+		}
+
+		makeProposals(nh)
+		ctx, cancel := context.WithTimeout(context.Background(), pto)
+		rv, err := nh.SyncRead(ctx, 1, nil)
+		cancel()
+		if err != nil {
+			t.Fatalf("failed to read applied value %v", err)
+		}
+		applied := rv.(uint64)
+		if applied <= index {
+			t.Fatalf("invalid applied value %d", applied)
+		}
+		snapshotDir := fmt.Sprintf("snapshot-%016X", index)
+		dir := fs.PathJoin(sspath, snapshotDir)
+		ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
+		if err := nh.SyncRequestImportSnapshot(ctx, 1, 1, dir); err != nil {
+			t.Fatalf("failed to import snapshot %v", err)
+		}
+		cancel()
+
+		// SyncRequestImportSnapshot imports the snapshot synchronously, but compact log entries
+		// asynchronously, this is ok for application because we can accept less compaction.
+		// Here we wait for the compaction completion, then query raft log .
+		time.Sleep(2 * time.Second)
+		rs, err := nh.QueryRaftLog(1, 18, 35, math.MaxUint64)
+		assert.NoError(t, err)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		select {
+		case v := <-rs.ResultC():
+			assert.True(t, v.Completed())
+			entries, logRange := v.RaftLogs()
+			assert.Equal(t, 17, len(entries))
+			assert.Equal(t, LogRange{FirstIndex: 18, LastIndex: 35}, logRange)
+		case <-ticker.C:
+			t.Fatalf("no results")
+		}
+		rs.Release()
+		nh.Close()
+	}
+	runNodeHostTestDC(t, tf, true, fs)
+}
+
 type chunks struct {
 	received  uint64
 	confirmed uint64
