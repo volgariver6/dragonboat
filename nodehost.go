@@ -70,6 +70,7 @@ import (
 
 	"github.com/lni/dragonboat/v4/client"
 	"github.com/lni/dragonboat/v4/config"
+	"github.com/lni/dragonboat/v4/internal/fileutil"
 	"github.com/lni/dragonboat/v4/internal/id"
 	"github.com/lni/dragonboat/v4/internal/invariants"
 	"github.com/lni/dragonboat/v4/internal/logdb"
@@ -83,6 +84,7 @@ import (
 	"github.com/lni/dragonboat/v4/raftio"
 	pb "github.com/lni/dragonboat/v4/raftpb"
 	sm "github.com/lni/dragonboat/v4/statemachine"
+	"github.com/lni/dragonboat/v4/tools"
 )
 
 const (
@@ -1008,6 +1010,82 @@ func (nh *NodeHost) RequestCompaction(shardID uint64,
 	}
 	defer nh.engine.setStepReady(shardID)
 	return n.requestCompaction()
+}
+
+// SyncRequestImportSnapshot requests a snapshot to be imported for the
+// specified shard node. It imports a snapshot in srcDir and make it
+// available to the replica then try to remove logs just before the
+// snapshot index.
+func (nh *NodeHost) SyncRequestImportSnapshot(
+	ctx context.Context, shardID uint64, replicaID uint64, srcDir string,
+) error {
+	_, err := getTimeoutFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	ssFilePath, err := tools.GetSnapshotFilepath(srcDir, nh.fs)
+	if err != nil {
+		return err
+	}
+	srcSnapshot, err := tools.GetSnapshotRecord(srcDir, server.MetadataFilename, nh.fs)
+	if err != nil {
+		return err
+	}
+	// Check whether it is a valid snapshot.
+	ok, err := tools.IsCompleteSnapshotImage(ssFilePath, srcSnapshot, nh.fs)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return tools.ErrIncompleteSnapshot
+	}
+	// Get the snapshot destination directory for the replica.
+	ssDir := nh.env.GetSnapshotDir(nh.nhConfig.DeploymentID,
+		srcSnapshot.ShardID, replicaID)
+	exist, err := fileutil.Exist(ssDir, nh.fs)
+	if err != nil {
+		return err
+	}
+	if exist {
+		// If the destination directory exists, clean it to make it ready.
+		if err := tools.CleanupSnapshotDir(ssDir, nh.fs); err != nil {
+			return err
+		}
+	} else {
+		// If the destination directory does not exist, create it.
+		if err := nh.env.CreateSnapshotDir(nh.nhConfig.DeploymentID,
+			srcSnapshot.ShardID, replicaID); err != nil {
+			return err
+		}
+	}
+	getSnapshotDir := func(cid uint64, nid uint64) string {
+		return nh.env.GetSnapshotDir(nh.nhConfig.DeploymentID, cid, nid)
+	}
+	ssEnv := server.NewSSEnv(getSnapshotDir,
+		srcSnapshot.ShardID, replicaID, srcSnapshot.Index, replicaID, server.SnapshotMode, nh.fs)
+	if err := ssEnv.CreateTempDir(); err != nil {
+		return err
+	}
+	dstDir := ssEnv.GetTempDir()
+	finalDir := ssEnv.GetFinalDir()
+	members, err := nh.SyncGetShardMembership(ctx, shardID)
+	if err != nil {
+		return err
+	}
+	// Get a new snapshot record, mainly the members. Because members may be different
+	// from those in source snapshot. So we need update members according to current
+	// member in system.
+	ss := tools.GetProcessedSnapshotRecord(finalDir, srcSnapshot, members.Nodes, nh.fs)
+	// Just copy source snapshot directory to destination directory.
+	if err := tools.CopySnapshot(srcSnapshot, srcDir, dstDir, nh.fs); err != nil {
+		return err
+	}
+	n, ok := nh.getShard(shardID)
+	if !ok {
+		return ErrShardNotFound
+	}
+	defer nh.engine.setStepReady(shardID)
+	return n.requestImportSnapshot(ss)
 }
 
 // SyncRequestDeleteReplica is the synchronous variant of the RequestDeleteReplica
