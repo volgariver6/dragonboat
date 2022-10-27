@@ -87,7 +87,7 @@ func TestGetSnapshotFilenames(t *testing.T) {
 	if len(fps) != 16 {
 		t.Errorf("failed to return all filenames")
 	}
-	_, err = getSnapshotFilepath(testDataDir, fs)
+	_, err = GetSnapshotFilepath(testDataDir, fs)
 	if err != ErrIncompleteSnapshot {
 		t.Errorf("failed to report ErrIncompleteSnapshot, got %v", err)
 	}
@@ -115,7 +115,7 @@ func TestSnapshotFilepath(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatalf("failed to close file %v", err)
 	}
-	fp, err := getSnapshotFilepath(testDataDir, fs)
+	fp, err := GetSnapshotFilepath(testDataDir, fs)
 	if err != nil {
 		t.Errorf("failed to get snapshot file path %v", err)
 	}
@@ -198,7 +198,7 @@ func TestCopySnapshot(t *testing.T) {
 		Filepath: src,
 		Files:    []*pb.SnapshotFile{{Filepath: extsrc}},
 	}
-	if err := copySnapshot(ss, testDataDir, testDstDataDir, fs); err != nil {
+	if err := CopySnapshot(ss, testDataDir, testDstDataDir, fs); err != nil {
 		t.Fatalf("failed to copy snapshot files %v", err)
 	}
 	exp := fs.PathJoin(testDstDataDir, "test.gbsnap")
@@ -277,7 +277,7 @@ func TestMissingMetadataFileIsReported(t *testing.T) {
 			t.Fatalf("%v", err)
 		}
 	}()
-	_, err := getSnapshotRecord(testDataDir, "test.data", fs)
+	_, err := GetSnapshotRecord(testDataDir, "test.data", fs)
 	if err == nil {
 		t.Fatalf("failed to report error")
 	}
@@ -323,7 +323,7 @@ func TestGetProcessedSnapshotRecord(t *testing.T) {
 	members[1] = "a1"
 	members[5] = "a5"
 	finalDir := "final_data"
-	newss := getProcessedSnapshotRecord(finalDir, ss, members, fs)
+	newss := GetProcessedSnapshotRecord(finalDir, ss, members, fs)
 	if newss.Index != ss.Index || newss.Term != ss.Term {
 		t.Errorf("index/term not copied")
 	}

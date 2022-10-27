@@ -148,15 +148,15 @@ func ImportSnapshot(nhConfig config.NodeHostConfig,
 	if err := checkImportSettings(nhConfig, memberNodes, replicaID); err != nil {
 		return err
 	}
-	ssfp, err := getSnapshotFilepath(srcDir, fs)
+	ssfp, err := GetSnapshotFilepath(srcDir, fs)
 	if err != nil {
 		return err
 	}
-	oldss, err := getSnapshotRecord(srcDir, server.MetadataFilename, fs)
+	oldss, err := GetSnapshotRecord(srcDir, server.MetadataFilename, fs)
 	if err != nil {
 		return err
 	}
-	ok, err := isCompleteSnapshotImage(ssfp, oldss, fs)
+	ok, err := IsCompleteSnapshotImage(ssfp, oldss, fs)
 	if err != nil {
 		return err
 	}
@@ -194,7 +194,7 @@ func ImportSnapshot(nhConfig config.NodeHostConfig,
 		return err
 	}
 	if exist {
-		if err := cleanupSnapshotDir(ssDir, fs); err != nil {
+		if err := CleanupSnapshotDir(ssDir, fs); err != nil {
 			return err
 		}
 	} else {
@@ -213,8 +213,8 @@ func ImportSnapshot(nhConfig config.NodeHostConfig,
 	}
 	dstDir := ssEnv.GetTempDir()
 	finalDir := ssEnv.GetFinalDir()
-	ss := getProcessedSnapshotRecord(finalDir, oldss, memberNodes, fs)
-	if err := copySnapshot(oldss, srcDir, dstDir, fs); err != nil {
+	ss := GetProcessedSnapshotRecord(finalDir, oldss, memberNodes, fs)
+	if err := CopySnapshot(oldss, srcDir, dstDir, fs); err != nil {
 		return err
 	}
 	if err := ssEnv.FinalizeSnapshot(&ss); err != nil {
@@ -223,7 +223,7 @@ func ImportSnapshot(nhConfig config.NodeHostConfig,
 	return logdb.ImportSnapshot(ss, replicaID)
 }
 
-func cleanupSnapshotDir(dir string, fs vfs.IFS) error {
+func CleanupSnapshotDir(dir string, fs vfs.IFS) error {
 	files, err := fs.List(dir)
 	if err != nil {
 		return err
@@ -264,7 +264,7 @@ func checkImportSettings(nhConfig config.NodeHostConfig,
 	return nil
 }
 
-func isCompleteSnapshotImage(ssfp string,
+func IsCompleteSnapshotImage(ssfp string,
 	ss pb.Snapshot, fs vfs.IFS) (bool, error) {
 	checksum, err := rsm.GetV2PayloadChecksum(ssfp, fs)
 	if err != nil {
@@ -273,7 +273,7 @@ func isCompleteSnapshotImage(ssfp string,
 	return bytes.Equal(checksum, ss.Checksum), nil
 }
 
-func getSnapshotFilepath(dir string, fs vfs.IFS) (string, error) {
+func GetSnapshotFilepath(dir string, fs vfs.IFS) (string, error) {
 	exist, err := fileutil.Exist(dir, fs)
 	if err != nil {
 		return "", err
@@ -324,7 +324,7 @@ func getSnapshotFilenames(path string, fs vfs.IFS) ([]string, error) {
 	return results, nil
 }
 
-func getSnapshotRecord(dir string,
+func GetSnapshotRecord(dir string,
 	filename string, fs vfs.IFS) (pb.Snapshot, error) {
 	var ss pb.Snapshot
 	if err := fileutil.GetFlagFileContent(dir, filename, &ss, fs); err != nil {
@@ -361,7 +361,7 @@ func checkMembers(old pb.Membership, members map[uint64]string) error {
 	return nil
 }
 
-func getProcessedSnapshotRecord(dstDir string,
+func GetProcessedSnapshotRecord(dstDir string,
 	old pb.Snapshot, members map[uint64]string, fs vfs.IFS) pb.Snapshot {
 	for _, file := range old.Files {
 		file.Filepath = fs.PathJoin(dstDir, fs.PathBase(file.Filepath))
@@ -412,9 +412,9 @@ func getProcessedSnapshotRecord(dstDir string,
 	return ss
 }
 
-func copySnapshot(ss pb.Snapshot,
+func CopySnapshot(ss pb.Snapshot,
 	srcDir string, dstDir string, fs vfs.IFS) error {
-	fp, err := getSnapshotFilepath(srcDir, fs)
+	fp, err := GetSnapshotFilepath(srcDir, fs)
 	if err != nil {
 		return err
 	}
