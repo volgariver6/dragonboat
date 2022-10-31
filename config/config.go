@@ -966,6 +966,9 @@ type GossipConfig struct {
 	// include AdvertiseAddresses from other NodeHost instances that you plan to
 	// launch shortly afterwards.
 	Seed []string
+	// CanUseSelfAsSeed is used to indicate whether the current node can be used as
+	// a seed.
+	CanUseSelfAsSeed bool
 	// Meta is the extra metadata to be included in gossip node's Meta field. It
 	// will be propagated to all other NodeHost instances via gossip.
 	Meta []byte
@@ -993,7 +996,8 @@ func (g *GossipConfig) Validate() error {
 	}
 	count := 0
 	for _, v := range g.Seed {
-		if v != g.BindAddress && v != g.AdvertiseAddress {
+		if g.CanUseSelfAsSeed ||
+			(v != g.BindAddress && v != g.AdvertiseAddress) {
 			count++
 		}
 		if !stringutil.IsValidAddress(v) {
