@@ -350,7 +350,11 @@ func (l *LogDB) IterateEntries(ents []pb.Entry,
 	if err != nil {
 		return nil, 0, err
 	}
-	return db.getEntries(shardID, replicaID, ents, size, low, high, maxSize)
+	_, ok := l.collection.keeper.(*regularKeeper)
+	if ok {
+		return db.getEntries(shardID, replicaID, ents, size, low, high, maxSize)
+	}
+	return db.getEntriesWithMultiplexed(shardID, replicaID, ents, size, low, high, maxSize)
 }
 
 // ReadRaftState returns the persistented raft state found in Log DB.
