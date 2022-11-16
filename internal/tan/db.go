@@ -257,7 +257,90 @@ func (d *db) getRaftState(shardID uint64, replicaID uint64,
 // getEntries queries the db to return raft entries between [low, high), the
 // max size of the returned entries is maxSize bytes. The results will be
 // appended into the input entries slice which is already size bytes in size.
+//
+// This method does not support multiplexed collection which is supported by
+// the original and lower performance version db.getEntriesWithMultiplexed.
 func (d *db) getEntries(shardID uint64, replicaID uint64,
+	entries []pb.Entry, size uint64, low uint64,
+	high uint64, maxSize uint64) ([]pb.Entry, uint64, error) {
+	d.mu.Lock()
+	readState := d.loadReadState()
+	ies, ok := readState.nodeStates.query(shardID, replicaID, low, high)
+	compactedTo := readState.nodeStates.compactedTo(shardID, replicaID)
+	d.mu.Unlock()
+	defer readState.unref()
+	if !ok {
+		return entries, size, nil
+	}
+	if low <= compactedTo {
+		return entries, size, nil
+	}
+	if maxSize == 0 {
+		maxSize = math.MaxUint64
+	}
+	expected := low
+	done := false
+	// We start from pos of the first index entry, scan through the log files.
+	// If the position of pb.Update does not match what is in the index, skip
+	// that pb.Update.
+	passed := 0
+	for {
+		if passed >= len(ies) {
+			break
+		}
+		f := func(u pb.Update, offset int64) bool {
+			for _, e := range u.EntriesToSave {
+				if e.Index < expected {
+					continue
+				}
+				nsz := uint64(e.SizeUpperLimit())
+				// If the remainder is not zero, means that this pb.Update is not available,
+				// the data has been overwritten and it should be skipped.
+				if (ies[passed].pos-offset)%blockSize != 0 {
+					return false
+				}
+				if e.Index == expected && e.Index < high &&
+					e.Index >= ies[passed].start && e.Index <= ies[passed].end {
+					size += nsz
+					expected++
+					if len(entries) > 0 && entries[len(entries)-1].Index+1 != e.Index {
+						panic("gap in entry index")
+					}
+					entries = append(entries, e)
+					if size > maxSize {
+						done = true
+						return false
+					}
+				}
+			}
+			// The index entry should be passed only if there are entries in u.EntriesToSave.
+			if len(u.EntriesToSave) > 0 {
+				passed++
+			}
+			if passed >= len(ies) {
+				return false
+			}
+			return true
+		}
+		err := d.readLog(ies[passed], f)
+		if err != nil {
+			return nil, 0, err
+		}
+		// read to the end, do not advance cur and continue with the current index.
+		if err == io.EOF {
+			continue
+		}
+		if done {
+			return entries, size, nil
+		}
+	}
+	return entries, size, nil
+}
+
+// getEntriesWithMultiplexed is just like db.getEntries() but with lower
+// performance because it almost open and read log file for each index
+// entry.
+func (d *db) getEntriesWithMultiplexed(shardID uint64, replicaID uint64,
 	entries []pb.Entry, size uint64, low uint64,
 	high uint64, maxSize uint64) ([]pb.Entry, uint64, error) {
 	d.mu.Lock()
@@ -279,8 +362,7 @@ func (d *db) getEntries(shardID uint64, replicaID uint64,
 	done := false
 	for _, ie := range ies {
 		queryIndex := ie
-		f := func(u pb.Update, _ int64) bool {
-			// TODO: optimize this, not to append one by one
+		f := func(u pb.Update, offset int64) bool {
 			for _, e := range u.EntriesToSave {
 				nsz := uint64(e.SizeUpperLimit())
 				if e.Index < expected {
