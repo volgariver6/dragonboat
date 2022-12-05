@@ -159,10 +159,12 @@ func (c *collection) getDB(shardID uint64, replicaID uint64) (*db, error) {
 	name := c.keeper.name(shardID, replicaID)
 	dbdir := c.fs.PathJoin(c.dirname, name)
 	if err := c.prepareDir(dbdir); err != nil {
+		plog.Errorf("liubo: drag prepare dir %s err %s", dbdir, err)
 		return nil, err
 	}
 	db, err := open(dbdir, dbdir, &Options{FS: c.fs})
 	if err != nil {
+		plog.Errorf("liubo: drag open dir %s err %s", dbdir, err)
 		return nil, err
 	}
 	c.keeper.set(shardID, replicaID, db)

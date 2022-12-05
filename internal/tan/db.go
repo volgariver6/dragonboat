@@ -210,7 +210,6 @@ func (d *db) getSnapshot(shardID uint64, replicaID uint64) (pb.Snapshot, error) 
 		return false
 	}
 	if err := d.readLog(ies, f); err != nil {
-		plog.Errorf("liubo: drag read log err %s", err)
 		return pb.Snapshot{}, err
 	}
 	return snapshot, nil
