@@ -181,6 +181,7 @@ func (d *db) id() string {
 func (d *db) createNewLog() error {
 	if d.mu.logFile != nil {
 		if err := d.mu.logFile.Close(); err != nil {
+			plog.Errorf("liubo: 111 close err %s", err)
 			return err
 		}
 	}
@@ -188,12 +189,15 @@ func (d *db) createNewLog() error {
 	logName := makeFilename(d.opts.FS, d.dirname, fileTypeLog, logNum)
 	logFile, err := d.opts.FS.Create(logName)
 	if err != nil {
+		plog.Errorf("liubo: 111 create log %s err %s", logName, err)
 		return err
 	}
 	if err := prealloc(logFile, d.opts.MaxLogFileSize+indexBlockSize); err != nil {
+		plog.Errorf("liubo: 111 prealloc err %s", err)
 		return err
 	}
 	if err := d.dataDir.Sync(); err != nil {
+		plog.Errorf("liubo: 111 sync err %s", err)
 		return err
 	}
 	d.mu.logFile = logFile
