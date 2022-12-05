@@ -421,6 +421,7 @@ func (l *LogDB) GetSnapshot(shardID uint64,
 	replicaID uint64) (pb.Snapshot, error) {
 	db, err := l.getDB(shardID, replicaID)
 	if err != nil {
+		plog.Errorf("liubo: drag get DB err %s", err)
 		return pb.Snapshot{}, err
 	}
 	return db.getSnapshot(shardID, replicaID)
