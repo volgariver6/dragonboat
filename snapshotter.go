@@ -268,6 +268,7 @@ func (s *snapshotter) getFilePath(index uint64) string {
 func (s *snapshotter) processOrphans() error {
 	files, err := s.fs.List(s.dir)
 	if err != nil {
+		plog.Errorf("liubo: drag list %s err %s", s.dir, err)
 		return err
 	}
 	noss := false
@@ -276,11 +277,13 @@ func (s *snapshotter) processOrphans() error {
 		if errors.Is(err, ErrNoSnapshot) {
 			noss = true
 		} else {
+			plog.Errorf("liubo: drag get snap err %s", err)
 			return err
 		}
 	}
 	removeFolder := func(fdir string) error {
 		if err := s.fs.RemoveAll(fdir); err != nil {
+			plog.Errorf("liubo: drag remove all %s err %s", fdir, err)
 			return err
 		}
 		return fileutil.SyncDir(s.dir, s.fs)
@@ -288,6 +291,7 @@ func (s *snapshotter) processOrphans() error {
 	for _, n := range files {
 		fi, err := s.fs.Stat(s.fs.PathJoin(s.dir, n))
 		if err != nil {
+			plog.Errorf("liubo: drag stat %s err %s", n, err)
 			return err
 		}
 		if !fi.IsDir() {
@@ -298,6 +302,7 @@ func (s *snapshotter) processOrphans() error {
 			var ss pb.Snapshot
 			if err := fileutil.GetFlagFileContent(fdir,
 				fileutil.SnapshotFlagFilename, &ss, s.fs); err != nil {
+				plog.Errorf("liubo: drag file content %s", err)
 				return err
 			}
 			if pb.IsEmptySnapshot(ss) {
@@ -313,22 +318,26 @@ func (s *snapshotter) processOrphans() error {
 			}
 			if remove {
 				if err := s.remove(ss.Index); err != nil {
+					plog.Errorf("liubo: drag remove %d, 1111 %s", ss.Index, err)
 					return err
 				}
 			} else {
 				env := s.getEnv(ss.Index)
 				if err := env.RemoveFlagFile(); err != nil {
+					plog.Errorf("liubo: drag remove flag err %s", err)
 					return err
 				}
 			}
 		} else if s.isZombie(fi.Name()) {
 			if err := removeFolder(fdir); err != nil {
+				plog.Errorf("liubo: drag remove 111 folder %s err %s", fdir, err)
 				return err
 			}
 		} else if s.isSnapshot(fi.Name()) {
 			index := s.parseIndex(fi.Name())
 			if noss || index != mrss.Index {
 				if err := removeFolder(fdir); err != nil {
+					plog.Errorf("liubo: drag remove 222 folder %s err %s", fdir, err)
 					return err
 				}
 			}
