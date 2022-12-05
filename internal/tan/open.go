@@ -47,6 +47,7 @@ func open(name string, dirname string, opts *Options) (*db, error) {
 	var err error
 	d.dataDir, err = opts.FS.OpenDir(dirname)
 	if err != nil {
+		plog.Errorf("liubo: drag open dir %s err %s", dirname, err)
 		return nil, err
 	}
 	currentName := makeFilename(opts.FS, dirname, fileTypeCurrent, 0)
@@ -54,6 +55,7 @@ func open(name string, dirname string, opts *Options) (*db, error) {
 		// Create the DB if it did not already exist.
 		plog.Infof("%s creating a new tan db", d.id())
 		if err := d.mu.versions.create(dirname, opts, d.dataDir, &d.mu.Mutex); err != nil {
+			plog.Errorf("liubo: drag create version err %s", err)
 			return nil, err
 		}
 	} else if err != nil {
@@ -62,15 +64,18 @@ func open(name string, dirname string, opts *Options) (*db, error) {
 		// Load the version set.
 		plog.Infof("%s loading an existing tan db", d.id())
 		if err := d.mu.versions.load(dirname, opts, &d.mu.Mutex); err != nil {
+			plog.Errorf("liubo: drag load version err %s", err)
 			return nil, err
 		}
 		if err := d.mu.versions.currentVersion().checkConsistency(dirname, opts.FS); err != nil {
+			plog.Errorf("liubo: drag check consist %s err %s", dirname, err)
 			return nil, err
 		}
 	}
 
 	ls, err := opts.FS.List(d.dirname)
 	if err != nil {
+		plog.Errorf("liubo: drag list %s err %s", d.dirname, err)
 		return nil, err
 	}
 	plog.Infof("%s on disk files %v", d.id(), ls)
@@ -108,6 +113,7 @@ func open(name string, dirname string, opts *Options) (*db, error) {
 			fallthrough
 		case fileTypeTemp:
 			if err := opts.FS.Remove(opts.FS.PathJoin(dirname, filename)); err != nil {
+				plog.Errorf("liubo: drag temp remove %s/%s err %s", dirname, filename, err)
 				return nil, err
 			}
 		case fileTypeIndex:
@@ -125,6 +131,7 @@ func open(name string, dirname string, opts *Options) (*db, error) {
 		}
 		if err := d.mu.nodeStates.load(dirname, indexFile.num, opts.FS); err != nil {
 			// TODO: we can actually regenerate the index when it is corrupted
+			plog.Errorf("liubo: drag node states load err %s", err)
 			return nil, err
 		}
 		delete(logFiles, indexFile.num)
@@ -137,6 +144,7 @@ func open(name string, dirname string, opts *Options) (*db, error) {
 				plog.Panicf("more than one log file have index missing")
 			}
 			if err := d.rebuildLogAndIndex(lf.num); err != nil {
+				plog.Errorf("liubo: drag rebuild index err %s", err)
 				return nil, err
 			}
 		}
@@ -151,6 +159,7 @@ func open(name string, dirname string, opts *Options) (*db, error) {
 	for _, index := range d.mu.nodeStates.indexes {
 		if index.entries.compactedTo > 0 {
 			if err := d.compactionLocked(index); err != nil {
+				plog.Errorf("liubo: drag compaction err %s", err)
 				return nil, err
 			}
 		}
