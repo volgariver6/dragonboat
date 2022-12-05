@@ -151,6 +151,7 @@ func open(name string, dirname string, opts *Options) (*db, error) {
 	}
 
 	if err := d.createNewLog(); err != nil {
+		plog.Errorf("liubo: drag create new log err %s", err)
 		return nil, err
 	}
 	d.updateReadStateLocked(nil)
