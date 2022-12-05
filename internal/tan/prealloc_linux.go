@@ -34,5 +34,9 @@ func prealloc(f vfs.File, size int64) error {
 	if !ok {
 		return nil
 	}
-	return syscall.Fallocate(int(osf.Fd()), unix.FALLOC_FL_KEEP_SIZE, 0, size)
+	err := syscall.Fallocate(int(osf.Fd()), unix.FALLOC_FL_KEEP_SIZE, 0, size)
+	if err != nil {
+		plog.Infof("liubo: prealloc err %s", err)
+	}
+	return err
 }
