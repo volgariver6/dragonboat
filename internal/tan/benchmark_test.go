@@ -17,12 +17,51 @@ package tan
 import (
 	"testing"
 
+	"github.com/lni/dragonboat/v4/config"
 	"github.com/lni/dragonboat/v4/internal/vfs"
 	"github.com/lni/dragonboat/v4/logger"
 	pb "github.com/lni/dragonboat/v4/raftpb"
+	"github.com/stretchr/testify/require"
 )
 
 var benchmarkTestDirname = "tan_benchmark_dir"
+
+func benchmarkWrite1(b *testing.B, sz int) {
+	logger.GetLogger("tan").SetLevel(logger.WARNING)
+	b.ReportAllocs()
+	fs := vfs.GetTestFS()
+	if err := fs.MkdirAll(benchmarkTestDirname, 0766); err != nil {
+		b.Fatalf("failed to create dir %v", err)
+	}
+	defer func() {
+		if err := fs.RemoveAll(benchmarkTestDirname); err != nil {
+			b.Fatalf("failed to remove dir %v", err)
+		}
+	}()
+	cfg := config.NodeHostConfig{
+		Expert: config.ExpertConfig{
+			FS:    fs,
+			LogDB: config.GetLargeMemLogDBConfig(),
+		},
+	}
+	dirs := []string{benchmarkTestDirname}
+	ldb, err := CreateTan(cfg, nil, dirs, []string{})
+	require.NoError(b, err)
+	u := pb.Update{
+		ShardID: 100,
+		EntriesToSave: []pb.Entry{
+			pb.Entry{Cmd: make([]byte, sz)},
+		},
+	}
+	defer b.StopTimer()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := ldb.SaveRaftState([]pb.Update{u}, 1); err != nil {
+			b.Fatalf("failed to save raft state %v", err)
+		}
+		b.SetBytes(int64(sz))
+	}
+}
 
 func benchmarkWrite(b *testing.B, sz int) {
 	logger.GetLogger("tan").SetLevel(logger.WARNING)
@@ -52,6 +91,8 @@ func benchmarkWrite(b *testing.B, sz int) {
 		},
 	}
 	buf := make([]byte, sz*2)
+	defer b.StopTimer()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		sync, err := db.write(u, buf)
 		if err != nil {
@@ -80,4 +121,8 @@ func BenchmarkWrite512K(b *testing.B) {
 
 func BenchmarkWrite1024K(b *testing.B) {
 	benchmarkWrite(b, 1024*1024)
+}
+
+func BenchmarkWrite1024KNew(b *testing.B) {
+	benchmarkWrite1(b, 1024*1024)
 }

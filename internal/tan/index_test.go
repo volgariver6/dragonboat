@@ -929,7 +929,7 @@ func TestIndexCompaction(t *testing.T) {
 			entries:     tt.entries,
 			compactedTo: tt.compactedTo,
 		}
-		fn := entries.compaction()
+		fn := entries.entryCompaction()
 		require.Equalf(t, tt.obsolete, fn, "idx: %d", idx)
 	}
 }

@@ -936,6 +936,8 @@ type ExpertConfig struct {
 	// TestGossipProbeInterval define the probe interval used by the gossip
 	// service in tests.
 	TestGossipProbeInterval time.Duration
+	// DBNum is the number of db that is used in parallel, for the performance.
+	DBNum int
 }
 
 // GossipConfig contains configurations for the gossip service. Gossip service

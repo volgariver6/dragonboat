@@ -37,6 +37,7 @@ db.mu.nodeStates. This means each raft node will have its own nodeIndex.
 package tan
 
 import (
+	"fmt"
 	"io"
 	"sync"
 
@@ -48,7 +49,7 @@ import (
 )
 
 const (
-	defaultBufferSize = 1024 * 1024 * 4
+	defaultBufferSize = 1024 * 1024 * 8
 	defaultDBName     = "tandb"
 	bootstrapDirname  = "bootstrap"
 	defaultShards     = 16
@@ -86,25 +87,34 @@ func (factory) Name() string {
 	return tanLogDBName
 }
 
+// Name returns the name of the tan instance.
+func (multiplexLogFactory) Name() string {
+	return tanLogDBName
+}
+
 // LogDB is the tan ILogDB type used to interface with dragonboat.
 type LogDB struct {
-	mu         sync.Mutex
-	fileLock   io.Closer
-	dirname    string
-	dir        vfs.File
-	bsDirname  string
-	bsDir      vfs.File
-	fs         vfs.FS
-	buffers    [][]byte
-	wgs        []*sync.WaitGroup
-	collection collection
+	mu          sync.Mutex
+	fileLock    io.Closer
+	dirname     string
+	dir         vfs.File
+	bsDirname   string
+	bsDir       vfs.File
+	fs          vfs.FS
+	buffers     [][]byte
+	wgs         []*sync.WaitGroup
+	dbNum       int
+	collections []collection
+	entries     [][]pb.Entry
+	total       int64
+	count       int64
 }
 
 // CreateTan creates and return a regular tan instance. Each raft node will
 // be backed by a dedicated log file.
 func CreateTan(cfg config.NodeHostConfig, cb config.LogDBCallback,
 	dirs []string, wals []string) (*LogDB, error) {
-	return createTan(cfg, cb, dirs, wals, true)
+	return createTan(cfg, cb, dirs, wals, true, cfg.Expert.DBNum)
 }
 
 // CreateLogMultiplexedTan creates and returns a tan instance that uses
@@ -114,30 +124,43 @@ func CreateTan(cfg config.NodeHostConfig, cb config.LogDBCallback,
 // thousands action log files.
 func CreateLogMultiplexedTan(cfg config.NodeHostConfig, cb config.LogDBCallback,
 	dirs []string, wals []string) (*LogDB, error) {
-	return createTan(cfg, cb, dirs, wals, false)
+	return createTan(cfg, cb, dirs, wals, false, 1)
 }
 
 func createTan(cfg config.NodeHostConfig, cb config.LogDBCallback,
-	dirs []string, wals []string, singleNodeLog bool) (*LogDB, error) {
+	dirs []string, wals []string, singleNodeLog bool, dbNum int) (*LogDB, error) {
 	if cfg.Expert.FS == nil {
 		panic("fs not set")
 	}
 	if cfg.Expert.LogDB.IsEmpty() {
 		panic("logdb config is empty")
 	}
-	dirname := cfg.Expert.FS.PathJoin(dirs[0], defaultDBName)
+	if dbNum <= 0 {
+		plog.Infof("db num less than 1, so set it to 1")
+		dbNum = 8
+	}
+	dirnames := make([]string, 0, dbNum)
+	for i := 0; i < dbNum; i++ {
+		dirnames = append(dirnames, cfg.Expert.FS.PathJoin(dirs[0], fmt.Sprintf("%s-%d", defaultDBName, i)))
+	}
 	ldb := &LogDB{
-		dirname:    dirname,
-		fs:         cfg.Expert.FS,
-		buffers:    make([][]byte, defaultShards),
-		wgs:        make([]*sync.WaitGroup, defaultShards),
-		collection: newCollection(dirname, cfg.Expert.FS, singleNodeLog),
+		dirname:     dirnames[0],
+		fs:          cfg.Expert.FS,
+		buffers:     make([][]byte, defaultShards),
+		wgs:         make([]*sync.WaitGroup, defaultShards),
+		dbNum:       dbNum,
+		collections: make([]collection, dbNum),
+		entries:     make([][]pb.Entry, dbNum),
 	}
 	for i := 0; i < len(ldb.buffers); i++ {
 		ldb.buffers[i] = make([]byte, cfg.Expert.LogDB.KVWriteBufferSize)
 	}
 	for i := 0; i < len(ldb.wgs); i++ {
 		ldb.wgs[i] = new(sync.WaitGroup)
+	}
+	for i := 0; i < dbNum; i++ {
+		ldb.collections[i] = newCollection(dirnames[i], cfg.Expert.FS, singleNodeLog)
+		ldb.entries[i] = make([]pb.Entry, 1512)
 	}
 	var err error
 	if err := fileutil.MkdirAll(ldb.dirname, ldb.fs); err != nil {
@@ -208,9 +231,11 @@ func (l *LogDB) Close() (err error) {
 	func() {
 		l.mu.Lock()
 		defer l.mu.Unlock()
-		err = firstError(err, l.collection.iterate(func(db *db) error {
-			return db.close()
-		}))
+		for i := 0; i < l.dbNum; i++ {
+			err = firstError(err, l.collections[i].iterate(func(db *db) error {
+				return db.close()
+			}))
+		}
 	}()
 	err = firstError(err, l.bsDir.Close())
 	err = firstError(err, l.dir.Close())
@@ -256,10 +281,69 @@ func (l *LogDB) GetBootstrapInfo(shardID uint64,
 // SaveRaftState atomically saves the Raft states, log entries and snapshots
 // metadata found in the pb.Update list to the log DB.
 func (l *LogDB) SaveRaftState(updates []pb.Update, shardID uint64) error {
-	if l.collection.multiplexedLog() {
+	if l.collections[0].multiplexedLog() {
 		return l.concurrentSaveState(updates, shardID)
 	}
-	return l.sequentialSaveState(updates, shardID)
+	if l.dbNum == 1 {
+		return l.sequentialSaveState(updates, shardID)
+	}
+	return l.parallelSave(updates, shardID)
+}
+
+func (l *LogDB) splitUpdate(u pb.Update) []pb.Update {
+	updates := make([]pb.Update, 0, l.dbNum)
+	for i := 0; i < l.dbNum; i++ {
+		t := u
+		t.EntriesToSave = make([]pb.Entry, len(u.EntriesToSave))
+		updates = append(updates, t)
+	}
+
+	for idx, e := range u.EntriesToSave {
+		sz := len(e.Cmd)
+		for i := 0; i < l.dbNum; i++ {
+			updates[i].EntriesToSave[idx] = e
+			updates[i].EntriesToSave[idx].Cmd = e.Cmd[sz*i/l.dbNum : sz*(i+1)/l.dbNum]
+		}
+	}
+	return updates
+}
+
+func (l *LogDB) parallelSave(updates []pb.Update, shardID uint64) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	var buf []byte
+	if shardID-1 < uint64(len(l.buffers)) {
+		buf = l.buffers[shardID-1]
+	} else {
+		buf = make([]byte, defaultBufferSize)
+	}
+	for _, ud := range updates {
+		us := l.splitUpdate(ud)
+		if len(us) != l.dbNum {
+			panic(fmt.Sprintf("split Update length %d does not equal to db num %d", len(us), l.dbNum))
+		}
+		var wg sync.WaitGroup
+		wg.Add(l.dbNum)
+		for i := 0; i < l.dbNum; i++ {
+			go func(idx int) {
+				db, err := l.getDBByIndex(us[idx].ShardID, us[idx].ReplicaID, idx)
+				if err != nil {
+					panic(err)
+				}
+				_, err = db.write(us[idx], buf[len(buf)*idx/l.dbNum:len(buf)*(idx+1)/l.dbNum])
+				if err != nil {
+					panic(err)
+				}
+				if err := db.sync(); err != nil {
+					panic(err)
+				}
+				wg.Done()
+			}(i)
+		}
+		wg.Wait()
+	}
+	return nil
 }
 
 func (l *LogDB) concurrentSaveState(updates []pb.Update, shardID uint64) error {
@@ -274,9 +358,9 @@ func (l *LogDB) concurrentSaveState(updates []pb.Update, shardID uint64) error {
 	var usedShardID uint64
 	for idx, ud := range updates {
 		if idx == 0 {
-			usedShardID = l.collection.key(ud.ShardID)
+			usedShardID = l.collections[0].key(ud.ShardID)
 		} else {
-			if usedShardID != l.collection.key(ud.ShardID) {
+			if usedShardID != l.collections[0].key(ud.ShardID) {
 				panic("shard ID changed")
 			}
 		}
@@ -346,15 +430,58 @@ func (l *LogDB) sequentialSaveState(updates []pb.Update, shardID uint64) error {
 func (l *LogDB) IterateEntries(ents []pb.Entry,
 	size uint64, shardID uint64, replicaID uint64, low uint64,
 	high uint64, maxSize uint64) ([]pb.Entry, uint64, error) {
-	db, err := l.getDB(shardID, replicaID)
-	if err != nil {
-		return nil, 0, err
+	_, ok := l.collections[0].keeper.(*regularKeeper)
+	if !ok {
+		db, err := l.getDB(shardID, replicaID)
+		if err != nil {
+			return nil, 0, err
+		}
+		return db.getEntriesWithMultiplexed(shardID, replicaID, ents, size, low, high, maxSize)
 	}
-	_, ok := l.collection.keeper.(*regularKeeper)
-	if ok {
-		return db.getEntries(shardID, replicaID, ents, size, low, high, maxSize)
+	entriesSlice := make([][]pb.Entry, 0, l.dbNum)
+	szSlice := make([]uint64, l.dbNum)
+	for i := 0; i < l.dbNum; i++ {
+		db, err := l.getDBByIndex(shardID, replicaID, i)
+		if err != nil {
+			return nil, 0, err
+		}
+		var es []pb.Entry
+		entries, sz, err := db.getEntries(shardID, replicaID, es, 0, low, high, maxSize/uint64(l.dbNum))
+		if err != nil {
+			return nil, 0, err
+		}
+		entriesSlice = append(entriesSlice, entries)
+		szSlice[i] = sz
 	}
-	return db.getEntriesWithMultiplexed(shardID, replicaID, ents, size, low, high, maxSize)
+	total := size
+	count := 0
+	for idx := range entriesSlice[0] {
+		shouldBreak := false
+		for i := 1; i < len(entriesSlice); i++ {
+			if len(entriesSlice[i]) <= idx {
+				shouldBreak = true
+				break
+			}
+		}
+		if shouldBreak {
+			break
+		}
+		for i := 1; i < len(entriesSlice); i++ {
+			entriesSlice[0][idx].Cmd = append(entriesSlice[0][idx].Cmd, entriesSlice[i][idx].Cmd...)
+		}
+		count++
+		total += uint64(entriesSlice[0][idx].SizeUpperLimit())
+		if total >= maxSize {
+			break
+		}
+	}
+	for _, sz := range szSlice {
+		if sz > maxSize/uint64(l.dbNum) {
+			total = maxSize + 1
+			break
+		}
+	}
+	return append(ents, entriesSlice[0][:count]...), total, nil
 }
 
 // ReadRaftState returns the persistented raft state found in Log DB.
@@ -466,5 +593,11 @@ func (l *LogDB) ImportSnapshot(snapshot pb.Snapshot, replicaID uint64) error {
 func (l *LogDB) getDB(shardID uint64, replicaID uint64) (*db, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.collection.getDB(shardID, replicaID)
+	return l.collections[0].getDB(shardID, replicaID)
+}
+
+func (l *LogDB) getDBByIndex(shardID uint64, replicaID uint64, idx int) (*db, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.collections[idx].getDB(shardID, replicaID)
 }

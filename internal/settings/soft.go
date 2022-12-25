@@ -186,7 +186,7 @@ func getDefaultSoftSettings() soft {
 		MaxEntrySize:                   MaxMessageBatchSize,
 		InMemGCTimeout:                 100,
 		InMemEntrySliceSize:            512,
-		MaxApplyEntrySize:              64 * 1024 * 1024,
+		MaxApplyEntrySize:              512 * 1024 * 1024,
 		MinEntrySliceFreeSize:          96,
 		IncomingReadIndexQueueLength:   4096,
 		IncomingProposalQueueLength:    2048,

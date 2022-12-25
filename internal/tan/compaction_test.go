@@ -131,14 +131,14 @@ func TestRemovedEntriesMultiplexedLogSetup(t *testing.T) {
 			},
 		}
 		require.NoError(t, ldb.SaveRaftState(updates, 1))
-		db, err := ldb.collection.getDB(1, 1)
+		db, err := ldb.collections[0].getDB(1, 1)
 		require.NoError(t, err)
 		// switchToNewLog() should only be called when db.mu is locked
 		db.mu.Lock()
 		require.NoError(t, db.switchToNewLog())
 		db.mu.Unlock()
 	}
-	db, err := ldb.collection.getDB(1, 1)
+	db, err := ldb.collections[0].getDB(1, 1)
 	require.NoError(t, err)
 	current := db.mu.versions.currentVersion()
 	fileCount := len(current.files)

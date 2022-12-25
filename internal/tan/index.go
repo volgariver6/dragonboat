@@ -265,10 +265,6 @@ func (i *index) decode(d *indexDecoder) error {
 	return nil
 }
 
-func (i *index) compaction() fileNum {
-	return i.entryCompaction()
-}
-
 // entryCompaction calculates and returns the max log file fileNum that is
 // considered as obsolete and can be safely deleted.
 func (i *index) entryCompaction() fileNum {
@@ -389,7 +385,7 @@ func (n *nodeIndex) snapshotCompaction() fileNum {
 }
 
 func (n *nodeIndex) compaction() []fileNum {
-	efn := n.entries.compaction()
+	efn := n.entries.entryCompaction()
 	sfn := n.snapshotCompaction()
 	stateFn := n.stateCompaction()
 	maxObsoleteFileNum := fileNum(0)

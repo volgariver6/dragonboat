@@ -687,9 +687,31 @@ func TestGetEntriesWithMaxSize(t *testing.T) {
 			_, err := db.write(u, buf)
 			require.NoError(t, err)
 		}
+		fileAccess := db.is.getFileAccess()
 		entries, _, err := db.getEntries(2, 3, nil, 0, 1, 128, 128)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(entries))
+		require.Equal(t, fileAccess+1, db.is.getFileAccess())
 	}
 	runTanTest(t, opts, tf, fs)
+}
+
+func TestIOStat(t *testing.T) {
+	var is iostat
+	is.syncFile()
+	is.syncFile()
+	require.Equal(t, uint64(2), is.getSyncCount())
+
+	is.accessFile()
+	is.accessFile()
+	is.accessFile()
+	require.Equal(t, uint64(3), is.getFileAccess())
+
+	is.read(uint64(100))
+	is.read(uint64(1234))
+	require.Equal(t, uint64(1334), is.getReadBytes())
+
+	is.write(uint64(10))
+	is.write(uint64(20))
+	require.Equal(t, uint64(30), is.getWriteBytes())
 }

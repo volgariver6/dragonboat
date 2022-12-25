@@ -1600,8 +1600,8 @@ func (r *raft) Handle(m pb.Message) error {
 		}
 		return r.handle(r, m)
 	}
-	plog.Infof("%s dropped %s from %s, term %d, term not matched",
-		r.describe(), m.Type, ReplicaID(m.From), m.Term)
+	plog.Infof("%s dropped %s from %s (entries %d), term %d, term not matched",
+		r.describe(), m.Type, ReplicaID(m.From), len(m.Entries), m.Term)
 	return nil
 }
 

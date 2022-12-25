@@ -53,6 +53,47 @@ var (
 	ErrNoState = errors.New("no state record")
 )
 
+// iostat is used to keep basic stats of IO.
+type iostat struct {
+	sync uint64
+	// index related accesses are not counted
+	fileAccess uint64
+	readBytes  uint64
+	writeBytes uint64
+}
+
+func (is *iostat) syncFile() {
+	atomic.AddUint64(&is.sync, 1)
+}
+
+func (is *iostat) getSyncCount() uint64 {
+	return atomic.LoadUint64(&is.sync)
+}
+
+func (is *iostat) accessFile() {
+	atomic.AddUint64(&is.fileAccess, 1)
+}
+
+func (is *iostat) getFileAccess() uint64 {
+	return atomic.LoadUint64(&is.fileAccess)
+}
+
+func (is *iostat) read(bytes uint64) {
+	atomic.AddUint64(&is.readBytes, bytes)
+}
+
+func (is *iostat) getReadBytes() uint64 {
+	return atomic.LoadUint64(&is.readBytes)
+}
+
+func (is *iostat) write(bytes uint64) {
+	atomic.AddUint64(&is.writeBytes, bytes)
+}
+
+func (is *iostat) getWriteBytes() uint64 {
+	return atomic.LoadUint64(&is.writeBytes)
+}
+
 // db is basically an instance of the core tan storage, it holds required
 // resources and manages log and index data.
 type db struct {
@@ -62,6 +103,7 @@ type db struct {
 	opts     *Options
 	dataDir  vfs.File
 	dirname  string
+	is       iostat
 
 	// for asynchronously delete files in the background
 	deleteObsoleteCh     chan struct{}
@@ -119,6 +161,7 @@ func (d *db) doWriteLocked(u pb.Update, data []byte) error {
 	if err := d.makeRoomForWrite(); err != nil {
 		return err
 	}
+	d.is.write(uint64(len(data)))
 	offset, err := d.mu.logWriter.writeRecord(data)
 	if err != nil {
 		return err
@@ -131,6 +174,7 @@ func (d *db) doWriteLocked(u pb.Update, data []byte) error {
 
 // sync issues a fsync() operation on the underlying log file.
 func (d *db) sync() error {
+	d.is.syncFile()
 	return d.mu.logFile.Sync()
 }
 
@@ -182,6 +226,7 @@ func (d *db) makeRoomForWrite() error {
 // switchToNewLog flushes the index of the current log file to disk, update the
 // readState hold by the db and then switch to a new log file.
 func (d *db) switchToNewLog() error {
+	d.is.accessFile()
 	if err := d.saveIndex(); err != nil {
 		return err
 	}
@@ -402,6 +447,7 @@ func (d *db) getEntriesWithMultiplexed(shardID uint64, replicaID uint64,
 func (d *db) readLog(ie indexEntry,
 	h func(u pb.Update, offset int64) bool) (err error) {
 	fn := makeFilename(d.opts.FS, d.dirname, fileTypeLog, ie.fileNum)
+	d.is.accessFile()
 	f, err := d.opts.FS.Open(fn)
 	if err != nil {
 		return err
@@ -433,7 +479,9 @@ func (d *db) readLog(ie indexEntry,
 			return errors.Wrap(err, "error when reading WAL")
 		}
 		var update pb.Update
-		pb.MustUnmarshal(&update, buf.Bytes())
+		data := buf.Bytes()
+		d.is.read(uint64(len(data)))
+		pb.MustUnmarshal(&update, data)
 		if !h(update, offset) {
 			break
 		}

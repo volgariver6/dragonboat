@@ -28,10 +28,6 @@ import (
 // the op. the compactedTo field of the index.entries and index.currEntries are
 // set.
 func (d *db) removeEntries(shardID uint64, replicaID uint64, index uint64) error {
-	return d.remove(shardID, replicaID, index)
-}
-
-func (d *db) remove(shardID uint64, replicaID uint64, index uint64) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	update := getCompactionUpdate(shardID, replicaID, index)
@@ -67,7 +63,7 @@ func (d *db) compactionLocked(index *nodeIndex) error {
 	return nil
 }
 
-func merge(a, b []fileNum) []fileNum {
+func mergeFileNums(a, b []fileNum) []fileNum {
 	if len(b) == 0 {
 		return a
 	}
@@ -139,7 +135,7 @@ func (d *db) scanObsoleteFiles(list []string) {
 		}
 	}
 	d.mu.versions.obsoleteTables = mergeFileMetas(d.mu.versions.obsoleteTables, obsoleteTables)
-	d.mu.versions.obsoleteManifests = merge(d.mu.versions.obsoleteManifests, obsoleteManifests)
+	d.mu.versions.obsoleteManifests = mergeFileNums(d.mu.versions.obsoleteManifests, obsoleteManifests)
 }
 
 func (d *db) notifyDeleteObsoleteWorker() {
