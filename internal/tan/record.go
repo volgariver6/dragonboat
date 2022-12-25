@@ -125,9 +125,9 @@ const (
 )
 
 const (
-	blockSize            = 32 * 1024
+	blockSize            = 128 * 1024
 	blockSizeMask        = blockSize - 1
-	legacyHeaderSize     = 7
+	legacyHeaderSize     = 9
 	recyclableHeaderSize = legacyHeaderSize + 4
 )
 
@@ -204,8 +204,8 @@ func (r *reader) nextChunk(wantFirst bool) error {
 	for {
 		if r.end+legacyHeaderSize <= r.n {
 			checksum := binary.LittleEndian.Uint32(r.buf[r.end+0 : r.end+4])
-			length := binary.LittleEndian.Uint16(r.buf[r.end+4 : r.end+6])
-			chunkType := r.buf[r.end+6]
+			length := binary.LittleEndian.Uint32(r.buf[r.end+4 : r.end+8])
+			chunkType := r.buf[r.end+8]
 
 			if checksum == 0 && length == 0 && chunkType == 0 {
 				if r.end+recyclableHeaderSize > r.n {
@@ -257,7 +257,9 @@ func (r *reader) nextChunk(wantFirst bool) error {
 				}
 				return ErrInvalidChunk
 			}
-			if checksum != getCRC(r.buf[r.begin-headerSize+6:r.end]) {
+			// fmt.Printf("liubo: begin: %d, end: %d, header size: %d, checksum %d, crc %d\n",
+			// 	r.begin, r.end, headerSize, checksum, getCRC(r.buf[r.begin-headerSize+8:r.end]))
+			if checksum != getCRC(r.buf[r.begin-headerSize+8:r.end]) {
 				if r.recovering {
 					r.recover()
 					continue
@@ -471,19 +473,19 @@ func (w *writer) fillHeader(last bool) {
 	}
 	if last {
 		if w.first {
-			w.buf[w.i+6] = fullChunkType
+			w.buf[w.i+8] = fullChunkType
 		} else {
-			w.buf[w.i+6] = lastChunkType
+			w.buf[w.i+8] = lastChunkType
 		}
 	} else {
 		if w.first {
-			w.buf[w.i+6] = firstChunkType
+			w.buf[w.i+8] = firstChunkType
 		} else {
-			w.buf[w.i+6] = middleChunkType
+			w.buf[w.i+8] = middleChunkType
 		}
 	}
-	binary.LittleEndian.PutUint32(w.buf[w.i+0:w.i+4], getCRC(w.buf[w.i+6:w.j]))
-	binary.LittleEndian.PutUint16(w.buf[w.i+4:w.i+6], uint16(w.j-w.i-legacyHeaderSize))
+	binary.LittleEndian.PutUint32(w.buf[w.i+0:w.i+4], getCRC(w.buf[w.i+8:w.j]))
+	binary.LittleEndian.PutUint32(w.buf[w.i+4:w.i+8], uint32(w.j-w.i-legacyHeaderSize))
 }
 
 // writeBlock writes the buffered block to the underlying writer, and reserves

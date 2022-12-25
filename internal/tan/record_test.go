@@ -172,10 +172,10 @@ func TestFlush(t *testing.T) {
 	if got, want := buf.Len(), 0; got != want {
 		t.Fatalf("buffer length #0: got %d want %d", got, want)
 	}
-	// Flush the record.Writer buffer, which should yield 17 bytes.
-	// 17 = 2*7 + 1 + 2, which is two headers and 1 + 2 payload bytes.
+	// Flush the record.Writer buffer, which should yield 21 bytes.
+	// 21 = 2*9 + 1 + 2, which is two headers and 1 + 2 payload bytes.
 	require.NoError(t, w.flush())
-	if got, want := buf.Len(), 17; got != want {
+	if got, want := buf.Len(), 21; got != want {
 		t.Fatalf("buffer length #1: got %d want %d", got, want)
 	}
 	// Do another write, one that isn't large enough to complete the block.
@@ -183,34 +183,34 @@ func TestFlush(t *testing.T) {
 	w2, _ := w.next()
 	_, err = w2.Write(bytes.Repeat([]byte("2"), 10000))
 	require.NoError(t, err)
-	if got, want := buf.Len(), 17; got != want {
+	if got, want := buf.Len(), 21; got != want {
 		t.Fatalf("buffer length #2: got %d want %d", got, want)
 	}
 	// Flushing should get us up to 10024 bytes written.
-	// 10024 = 17 + 7 + 10000.
+	// 10030 = 21 + 9 + 10000.
 	require.NoError(t, w.flush())
-	if got, want := buf.Len(), 10024; got != want {
+	if got, want := buf.Len(), 10030; got != want {
 		t.Fatalf("buffer length #3: got %d want %d", got, want)
 	}
 	// Do a bigger write, one that completes the current block.
-	// We should now have 32768 bytes (a complete block), without
+	// We should now have 131072 bytes (a complete block), without
 	// an explicit flush.
 	w3, _ := w.next()
-	_, err = w3.Write(bytes.Repeat([]byte("3"), 40000))
+	_, err = w3.Write(bytes.Repeat([]byte("3"), 200000))
 	require.NoError(t, err)
-	if got, want := buf.Len(), 32768; got != want {
+	if got, want := buf.Len(), 131072; got != want {
 		t.Fatalf("buffer length #4: got %d want %d", got, want)
 	}
 	// Flushing should get us up to 50038 bytes written.
-	// 50038 = 10024 + 2*7 + 40000. There are two headers because
+	// 210048 = 10030 + 2*9 + 200000 . There are two headers because
 	// the one record was split into two chunks.
 	require.NoError(t, w.flush())
-	if got, want := buf.Len(), 50038; got != want {
+	if got, want := buf.Len(), 210048; got != want {
 		t.Fatalf("buffer length #5: got %d want %d", got, want)
 	}
 	// Check that reading those records give the right lengths.
 	r := newReader(buf, 0 /* logNum */)
-	wants := []int64{1, 2, 10000, 40000}
+	wants := []int64{1, 2, 10000, 200000}
 	for i, want := range wants {
 		rr, _ := r.next()
 		n, err := io.Copy(io.Discard, rr)
@@ -759,7 +759,7 @@ func TestLastRecordOffset(t *testing.T) {
 		t.Fatalf("makeTestRecords: %v", err)
 	}
 
-	wants := []int64{0, 98332, 131072, 163840, 196608}
+	wants := []int64{0, 393252, 524288, 655360, 786432}
 	for i, got := range recs.offsets {
 		if want := wants[i]; got != want {
 			t.Errorf("record #%d: got %d, want %d", i, got, want)
