@@ -17,6 +17,7 @@ package raft
 import (
 	"github.com/lni/dragonboat/v4/config"
 	"github.com/lni/dragonboat/v4/internal/settings"
+	"github.com/stretchr/testify/require"
 	"math"
 	"reflect"
 	"sort"
@@ -3452,4 +3453,49 @@ func TestSetLeaderIDWillSetLeaderInfo(t *testing.T) {
 	r.setLeaderID(100)
 	assert.Equal(t, uint64(100), r.leaderID)
 	assert.Equal(t, &pb.LeaderUpdate{LeaderID: 100, Term: 200}, r.leaderUpdate)
+}
+
+func TestBatchReplicateMsg(t *testing.T) {
+	s := NewTestLogDB()
+	r := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, s)
+	r.becomeCandidate()
+	require.NoError(t, r.becomeLeader())
+	r.setReplicateBatched(true)
+	commitNoopEntry(r, s)
+	for i := 2; i < 10; i++ {
+		err := r.Handle(pb.Message{
+			From: 1,
+			To:   1,
+			Type: pb.Propose,
+			Term: 1,
+			Entries: []pb.Entry{
+				{Term: 1, Index: 0},
+			},
+		})
+		require.NoError(t, err)
+		require.Equal(t, r.state, leader)
+	}
+	// indexes are continuous, so there 2 messages 1->2 and 1->3, each has
+	// 8 entries in it.
+	assert.Equal(t, 2, len(r.msgs))
+	for _, m := range r.msgs {
+		assert.Equal(t, m.LogIndex, uint64(1))
+		assert.Equal(t, len(m.Entries), 8)
+	}
+
+	err := r.Handle(pb.Message{
+		From:     2,
+		To:       1,
+		Type:     pb.ReplicateResp,
+		Term:     1,
+		LogIndex: 2,
+		Reject:   true,
+		Entries: []pb.Entry{
+			{Term: 1, Index: 0},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, r.state, leader)
+	// indexes are not continuous, so there 3 messages.
+	assert.Equal(t, 3, len(r.msgs))
 }

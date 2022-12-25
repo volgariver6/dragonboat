@@ -193,6 +193,12 @@ type Config struct {
 	//
 	// Quiesce support is currently experimental.
 	Quiesce bool
+	// ReplicateBatched specifies whether batch the replicate entries.
+	// If it is true, the entries will be merged into the existing messages
+	// whose term and entries are matched. Means that, the index of last entry
+	// already in the message slice plus 1 equals to the index of first entry
+	// in the incoming ones.
+	ReplicateBatched bool
 }
 
 // Validate validates the Config instance and return an error when any member

@@ -236,6 +236,7 @@ type raft struct {
 	isLeaderTransferTarget    bool
 	pendingConfigChange       bool
 	preVote                   bool
+	replicateBatched          bool
 }
 
 func newRaft(c config.Config, logdb ILogDB) *raft {
@@ -262,6 +263,7 @@ func newRaft(c config.Config, logdb ILogDB) *raft {
 		preVote:          c.PreVote,
 		readIndex:        newReadIndex(),
 		rl:               rl,
+		replicateBatched: c.ReplicateBatched,
 	}
 	plog.Infof("%s raft log rate limit enabled: %t, %d",
 		dn(r.shardID, r.replicaID), r.rl.Enabled(), c.MaxInMemLogSize)
@@ -370,6 +372,10 @@ func (r *raft) setLeaderID(leaderID uint64) {
 			r.events.LeaderUpdated(info)
 		}
 	}
+}
+
+func (r *raft) setReplicateBatched(b bool) {
+	r.replicateBatched = b
 }
 
 func (r *raft) leaderTransfering() bool {
@@ -784,6 +790,36 @@ func makeMetadataEntries(entries []pb.Entry) []pb.Entry {
 	return me
 }
 
+func (r *raft) isContinuousEntries(msg *pb.Message, entries []pb.Entry) bool {
+	if len(msg.Entries) > 0 && len(entries) > 0 {
+		first := entries[0]
+		last := msg.Entries[len(msg.Entries)-1]
+		return last.Term == first.Term && last.Index+1 == entries[0].Index
+	}
+	return true
+}
+
+func (r *raft) maybeBatchedReplicate(to uint64, rp *remote, entries []pb.Entry) bool {
+	if len(entries) == 0 {
+		return true
+	}
+	var batched bool
+	for i, m := range r.msgs {
+		if m.Type == pb.Replicate && m.To == to {
+			if !r.isContinuousEntries(&m, entries) {
+				return batched
+			}
+			r.msgs[i].Entries = append(r.msgs[i].Entries, entries...)
+			lastIndex := r.msgs[i].Entries[len(r.msgs[i].Entries)-1].Index
+			rp.progress(lastIndex)
+			r.msgs[i].Commit = r.log.committed
+			batched = true
+			break
+		}
+	}
+	return batched
+}
+
 func (r *raft) sendReplicateMessage(to uint64) {
 	var rp *remote
 	if v, ok := r.remotes[to]; ok {
@@ -812,6 +848,9 @@ func (r *raft) sendReplicateMessage(to uint64) {
 			r.describe(), index, ReplicaID(to), rp.next, rp.match, err)
 		rp.becomeSnapshot(index)
 	} else if len(m.Entries) > 0 {
+		if r.replicateBatched && r.maybeBatchedReplicate(to, rp, m.Entries) {
+			return
+		}
 		lastIndex := m.Entries[len(m.Entries)-1].Index
 		rp.progress(lastIndex)
 	}
