@@ -936,6 +936,9 @@ type ExpertConfig struct {
 	// TestGossipProbeInterval define the probe interval used by the gossip
 	// service in tests.
 	TestGossipProbeInterval time.Duration
+	// VerifyHostnameChanged verifies if the hostname has changed. If it is true,
+	// and hostname is changed, cluster should not start.
+	VerifyHostnameChanged bool
 }
 
 // GossipConfig contains configurations for the gossip service. Gossip service
