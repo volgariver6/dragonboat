@@ -411,7 +411,7 @@ func (env *Env) check(cfg config.NodeHostConfig,
 		if !cfg.AddressByNodeHostID && !se(s.Address, cfg.RaftAddress) {
 			return ErrNotOwner
 		}
-		if len(s.Hostname) > 0 && !se(s.Hostname, env.hostname) {
+		if cfg.Expert.VerifyHostnameChanged && len(s.Hostname) > 0 && !se(s.Hostname, env.hostname) {
 			return ErrHostnameChanged
 		}
 		if s.DeploymentId != 0 && s.DeploymentId != cfg.GetDeploymentID() {
