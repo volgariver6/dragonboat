@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/gob"
+	"fmt"
 	"net"
 	"strconv"
 	"sync"
@@ -90,6 +91,17 @@ func (m *metaStore) get(name string) (meta, bool) {
 
 func (m *metaStore) delete(name string) {
 	m.nodes.Delete(name)
+}
+
+func (m *metaStore) all() string {
+	var r string
+	m.nodes.Range(func(key, value any) bool {
+		name := key.(string)
+		md := value.(meta)
+		r += fmt.Sprintf("name: %s, meta: %v\n", name, md)
+		return true
+	})
+	return r
 }
 
 // GossipRegistry is a node registry backed by gossip. It is capable of

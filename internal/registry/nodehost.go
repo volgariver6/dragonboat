@@ -36,6 +36,10 @@ func (r *NodeHostRegistry) GetMeta(nhID string) ([]byte, bool) {
 	return m.Data, true
 }
 
+func (r *NodeHostRegistry) AllMeta() string {
+	return r.store.all()
+}
+
 // GetShardInfo returns the shard info for the specified shard if it is
 // available in the gossip view.
 func (r *NodeHostRegistry) GetShardInfo(shardID uint64) (ShardView, bool) {

@@ -20,4 +20,5 @@ type INodeHostRegistry interface {
 	NumOfShards() int
 	GetMeta(nhID string) ([]byte, bool)
 	GetShardInfo(shardID uint64) (ShardView, bool)
+	AllMeta() string
 }
