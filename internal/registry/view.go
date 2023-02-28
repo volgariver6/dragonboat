@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"math/rand"
+	"runtime/debug"
 	"sync"
 
 	"github.com/pierrec/lz4/v4"
@@ -134,6 +135,9 @@ func mergeShardInfo(current ShardView, update ShardView) ShardView {
 func (v *view) update(updates []ShardView) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	plog.Infof("liubo: update view stack %s", debug.Stack())
+	plog.Infof("liubo: update view current %+v", v.mu.shards)
+	plog.Infof("liubo: update view updates %+v", updates)
 
 	for _, u := range updates {
 		current, ok := v.mu.shards[u.ShardID]
