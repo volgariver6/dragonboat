@@ -15,6 +15,7 @@
 package registry
 
 import (
+	"runtime/debug"
 	"sync"
 
 	"github.com/hashicorp/memberlist"
@@ -63,13 +64,19 @@ func (e *sliceEventDelegate) put(typ memberlist.NodeEventType, n *memberlist.Nod
 }
 
 func (e *sliceEventDelegate) NotifyJoin(n *memberlist.Node) {
+	plog.Infof("liubo: notify join %s", debug.Stack())
+	plog.Infof("liubo: notify join %+v", *n)
 	e.put(memberlist.NodeJoin, n)
 }
 
 func (e *sliceEventDelegate) NotifyLeave(n *memberlist.Node) {
+	plog.Infof("liubo: notify leave %s", debug.Stack())
+	plog.Infof("liubo: notify leave %+v", *n)
 	e.put(memberlist.NodeLeave, n)
 }
 
 func (e *sliceEventDelegate) NotifyUpdate(n *memberlist.Node) {
+	plog.Infof("liubo: notify update %s", debug.Stack())
+	plog.Infof("liubo: notify update %+v", *n)
 	e.put(memberlist.NodeUpdate, n)
 }
