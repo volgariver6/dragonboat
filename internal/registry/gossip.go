@@ -201,9 +201,11 @@ func (d *eventDelegate) handle() {
 		if e.Event == memberlist.NodeJoin || e.Event == memberlist.NodeUpdate {
 			var m meta
 			if m.unmarshal(e.Node.Meta) {
+				plog.Infof("liubo: event type %s, node %+v, meta %+v", e.Event, e.Node, m)
 				d.store.put(e.Node.Name, m)
 			}
 		} else if e.Event == memberlist.NodeLeave {
+			plog.Infof("liubo: event type %s, node %+v", e.Event, e.Node)
 			d.store.delete(e.Node.Name)
 		} else {
 			panic("unknown event type")
