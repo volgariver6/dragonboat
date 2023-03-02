@@ -53,6 +53,9 @@ func (s *nodeStates) getState(shardID uint64, replicaID uint64) pb.State {
 }
 
 func (s *nodeStates) setState(shardID uint64, replicaID uint64, st pb.State) {
+	if !pb.IsStateValid(st) {
+		return
+	}
 	s.checkNodeInfo(shardID, replicaID)
 	ni := raftio.NodeInfo{ShardID: shardID, ReplicaID: replicaID}
 	s.states[ni] = st

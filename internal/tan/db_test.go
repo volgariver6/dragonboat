@@ -693,3 +693,50 @@ func TestGetEntriesWithMaxSize(t *testing.T) {
 	}
 	runTanTest(t, opts, tf, fs)
 }
+
+func TestWriteWithInvalidState(t *testing.T) {
+	for _, testSize := range []uint64{0, 1, 1024, 16 * 1024, blockSize, blockSize * 3} {
+		size := testSize
+		fs := vfs.NewMem()
+		tf := func(t *testing.T, db *db) {
+			var cmd []byte
+			if size > 0 {
+				cmd = make([]byte, size)
+			}
+			u1 := pb.Update{
+				ShardID:   2,
+				ReplicaID: 3,
+				State: pb.State{
+					Commit: 100,
+					Term:   5,
+					Vote:   3,
+				},
+				EntriesToSave: []pb.Entry{
+					{Index: 101, Term: 5, Cmd: cmd},
+					{Index: 102, Term: 5, Cmd: cmd},
+					{Index: 103, Term: 5, Cmd: cmd},
+				},
+			}
+			u2 := pb.Update{
+				ShardID:   2,
+				ReplicaID: 3,
+				State: pb.State{
+					Commit: 0,
+					Term:   0,
+					Vote:   0,
+				},
+			}
+			buf := make([]byte, 1024)
+			_, err := db.write(u1, buf)
+			require.NoError(t, err)
+			sync, err := db.write(u2, buf)
+			require.NoError(t, err)
+			// sync should be false.
+			require.False(t, sync)
+
+			// state should be the same as u1, because u2 is invalid.
+			require.Equal(t, u1.State, db.mu.nodeStates.getState(2, 3))
+		}
+		runTanTest(t, nil, tf, fs)
+	}
+}

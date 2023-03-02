@@ -51,6 +51,12 @@ func IsEmptySnapshot(s Snapshot) bool {
 	return s.Index == 0
 }
 
+// IsStateValid returns a boolean flag indicating whether the given state
+// is valid.
+func IsStateValid(s State) bool {
+	return s.Term != 0
+}
+
 // IsStateEqual returns whether two input state instances are equal.
 func IsStateEqual(a State, b State) bool {
 	return isStateEqual(a, b)
