@@ -85,8 +85,9 @@ type db struct {
 	}
 }
 
+// stateSyncChange returns true iif the states are valid and not equal.
 func stateSyncChange(a, b pb.State) bool {
-	return a.Term != b.Term || a.Vote != b.Vote
+	return pb.IsStateValid(a) && pb.IsStateValid(b) && (a.Term != b.Term || a.Vote != b.Vote)
 }
 
 // write writes the update instance to the log and returns a boolean flag

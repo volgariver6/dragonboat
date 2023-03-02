@@ -171,6 +171,7 @@ func testNodeHostDirectoryDetectsMismatches(t *testing.T,
 		RaftAddress:         testAddress,
 		AddressByNodeHostID: addressByNodeHostID,
 	}
+	cfg.Expert.VerifyHostnameChanged = true
 
 	status := raftpb.RaftDataStatus{
 		Address: addr,
