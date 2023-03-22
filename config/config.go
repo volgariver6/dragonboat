@@ -1014,7 +1014,7 @@ func (g *GossipConfig) Validate() error {
 }
 
 func isValidAdvertiseAddress(addr string) bool {
-	host, sp, err := net.SplitHostPort(addr)
+	_, sp, err := net.SplitHostPort(addr)
 	if err != nil {
 		return false
 	}
@@ -1025,7 +1025,6 @@ func isValidAdvertiseAddress(addr string) bool {
 	if port > 65535 {
 		return false
 	}
-	// the memberlist package doesn't allow hostname or DNS name to be used in
-	// advertise address
-	return stringutil.IPV4Regex.MatchString(host)
+	// the memberlist package allow domain name as advertise address.
+	return true
 }
