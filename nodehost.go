@@ -1046,12 +1046,7 @@ func (nh *NodeHost) SyncRequestImportSnapshot(
 	if err != nil {
 		return err
 	}
-	if exist {
-		// If the destination directory exists, clean it to make it ready.
-		if err := tools.CleanupSnapshotDir(ssDir, nh.fs); err != nil {
-			return err
-		}
-	} else {
+	if !exist {
 		// If the destination directory does not exist, create it.
 		if err := nh.env.CreateSnapshotDir(nh.nhConfig.DeploymentID,
 			srcSnapshot.ShardID, replicaID); err != nil {
