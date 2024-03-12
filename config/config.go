@@ -936,8 +936,14 @@ type ExpertConfig struct {
 	// TestGossipProbeInterval define the probe interval used by the gossip
 	// service in tests.
 	TestGossipProbeInterval time.Duration
+	// ExplicitHostname is the hostname which is used in dragonboat. If it is
+	// specified, we use it as the hostname but not the one from os package;
+	// if it is not specified, we obtain the hostname from os system.
+	ExplicitHostname string
 	// VerifyHostnameChanged verifies if the hostname has changed. If it is true,
-	// and hostname is changed, cluster should not start.
+	// and hostname is changed, cluster should not start. It is mainly used in
+	// the case that you want to move the data directory from old node to a new
+	// one.
 	VerifyHostnameChanged bool
 }
 

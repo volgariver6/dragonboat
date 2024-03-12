@@ -16,6 +16,7 @@ package server
 
 import (
 	"fmt"
+	"path"
 	"strings"
 	"testing"
 
@@ -93,6 +94,62 @@ func TestCheckNodeHostDirWorksWhenEverythingMatches(t *testing.T) {
 			raftio.LogDBBinVersion, testName); err != nil {
 			t.Fatalf("check node host dir failed %v", err)
 		}
+	}()
+	reportLeakedFD(fs, t)
+}
+
+func TestCheckExplicitHostname(t *testing.T) {
+	fs := vfs.GetTestFS()
+	defer func() {
+		if err := fs.RemoveAll(singleNodeHostTestDir); err != nil {
+			t.Fatalf("%v", err)
+		}
+	}()
+	func() {
+		c := getTestNodeHostConfig()
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic not expected")
+			}
+		}()
+		exHostname := "explicit-host1"
+		c.Expert.ExplicitHostname = exHostname
+		env, err := NewEnv(c, fs)
+		if err != nil {
+			t.Fatalf("failed to new environment %v", err)
+		}
+		if _, _, err := env.CreateNodeHostDir(testDeploymentID); err != nil {
+			t.Fatalf("%v", err)
+		}
+		dir, _ := env.getDataDirs()
+		testName := "test-name"
+		cfg := config.NodeHostConfig{
+			Expert:       config.GetDefaultExpertConfig(),
+			RaftAddress:  testAddress,
+			DeploymentID: testDeploymentID,
+		}
+		status := raftpb.RaftDataStatus{
+			Address: testAddress,
+			BinVer:  raftio.LogDBBinVersion,
+			HardHash: settings.HardHash(cfg.Expert.Engine.ExecShards,
+				cfg.Expert.LogDB.Shards, settings.Hard.LRUMaxSessionCount,
+				settings.Hard.LogDBEntryBatchSize),
+			LogdbType:    testName,
+			Hostname:     env.hostname,
+			DeploymentId: testDeploymentID,
+		}
+		err = fileutil.CreateFlagFile(dir, flagFilename, &status, fs)
+		if err != nil {
+			t.Errorf("failed to create flag file %v", err)
+		}
+		if err := env.CheckNodeHostDir(cfg,
+			raftio.LogDBBinVersion, testName); err != nil {
+			t.Fatalf("check node host dir failed %v", err)
+		}
+		if _, err := env.fs.Stat(path.Join(singleNodeHostTestDir, exHostname)); err != nil {
+			t.Fatalf("explicit hostname does not work: %v", err)
+		}
+
 	}()
 	reportLeakedFD(fs, t)
 }
