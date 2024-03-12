@@ -99,12 +99,17 @@ func NewEnv(nhConfig config.NodeHostConfig, fs vfs.IFS) (*Env, error) {
 		flocks:       make(map[string]io.Closer),
 		fs:           fs,
 	}
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, err
-	}
+	var err error
+	var hostname string
+	hostname = nhConfig.Expert.ExplicitHostname
 	if len(hostname) == 0 {
-		panic("failed to get hostname")
+		hostname, err = os.Hostname()
+		if err != nil {
+			return nil, err
+		}
+		if len(hostname) == 0 {
+			panic("failed to get hostname")
+		}
 	}
 	s.hostname = hostname
 	return s, nil
