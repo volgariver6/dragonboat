@@ -36,6 +36,8 @@ var (
 type ShardInfo struct {
 	// Nodes is a map of member node IDs to their Raft addresses.
 	Nodes map[uint64]string
+	// NonVotingNodes is a map of non-voting member node IDs to their Raft addresses.
+	NonVotingNodes map[uint64]string
 	// ShardID is the shard ID of the Raft shard node.
 	ShardID uint64
 	// ReplicaID is the replica ID of the Raft node.
@@ -67,6 +69,7 @@ type ShardInfo struct {
 type ShardView struct {
 	ShardID           uint64
 	Nodes             map[uint64]string
+	NonVotingNodes    map[uint64]string
 	ConfigChangeIndex uint64
 	LeaderID          uint64
 	Term              uint64
@@ -78,6 +81,7 @@ func toShardViewList(input []ShardInfo) []ShardView {
 		cv := ShardView{
 			ShardID:           ci.ShardID,
 			Nodes:             ci.Nodes,
+			NonVotingNodes:    ci.NonVotingNodes,
 			ConfigChangeIndex: ci.ConfigChangeIndex,
 			LeaderID:          ci.LeaderID,
 			Term:              ci.Term,

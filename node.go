@@ -1630,6 +1630,7 @@ func (n *node) notifyConfigChange() {
 		IsWitness:         isWitness,
 		ConfigChangeIndex: m.ConfigChangeId,
 		Nodes:             m.Addresses,
+		NonVotingNodes:    m.NonVotings,
 	}
 	n.shardInfo.Store(ci)
 	n.sysEvents.Publish(server.SystemEvent{
@@ -1668,6 +1669,7 @@ func (n *node) getShardInfo() ShardInfo {
 		IsNonVoting:       ci.IsNonVoting,
 		ConfigChangeIndex: ci.ConfigChangeIndex,
 		Nodes:             ci.Nodes,
+		NonVotingNodes:    ci.NonVotingNodes,
 		StateMachineType:  sm.Type(n.sm.Type()),
 	}
 }
