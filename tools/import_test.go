@@ -323,7 +323,7 @@ func TestGetProcessedSnapshotRecord(t *testing.T) {
 	members[1] = "a1"
 	members[5] = "a5"
 	finalDir := "final_data"
-	newss := GetProcessedSnapshotRecord(finalDir, ss, members, fs)
+	newss := GetProcessedSnapshotRecord(finalDir, ss, members, fs, false)
 	if newss.Index != ss.Index || newss.Term != ss.Term {
 		t.Errorf("index/term not copied")
 	}

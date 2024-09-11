@@ -1067,10 +1067,25 @@ func (nh *NodeHost) SyncRequestImportSnapshot(
 	if err != nil {
 		return err
 	}
+	mergeMap := func(maps ...map[uint64]string) map[uint64]string {
+		ret := make(map[uint64]string)
+		for _, m := range maps {
+			for k, v := range m {
+				ret[k] = v
+			}
+		}
+		return ret
+	}
 	// Get a new snapshot record, mainly the members. Because members may be different
 	// from those in source snapshot. So we need update members according to current
 	// member in system.
-	ss := tools.GetProcessedSnapshotRecord(finalDir, srcSnapshot, members.Nodes, nh.fs)
+	ss := tools.GetProcessedSnapshotRecord(
+		finalDir,
+		srcSnapshot,
+		mergeMap(members.Nodes, members.NonVotings, members.Witnesses),
+		nh.fs,
+		nh.nhConfig.Expert.MembershipImmovable,
+	)
 	// Just copy source snapshot directory to destination directory.
 	if err := tools.CopySnapshot(srcSnapshot, srcDir, dstDir, nh.fs); err != nil {
 		return err

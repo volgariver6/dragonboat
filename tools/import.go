@@ -213,7 +213,13 @@ func ImportSnapshot(nhConfig config.NodeHostConfig,
 	}
 	dstDir := ssEnv.GetTempDir()
 	finalDir := ssEnv.GetFinalDir()
-	ss := GetProcessedSnapshotRecord(finalDir, oldss, memberNodes, fs)
+	ss := GetProcessedSnapshotRecord(
+		finalDir,
+		oldss,
+		memberNodes,
+		fs,
+		nhConfig.Expert.MembershipImmovable,
+	)
 	if err := CopySnapshot(oldss, srcDir, dstDir, fs); err != nil {
 		return err
 	}
@@ -361,8 +367,13 @@ func checkMembers(old pb.Membership, members map[uint64]string) error {
 	return nil
 }
 
-func GetProcessedSnapshotRecord(dstDir string,
-	old pb.Snapshot, members map[uint64]string, fs vfs.IFS) pb.Snapshot {
+func GetProcessedSnapshotRecord(
+	dstDir string,
+	old pb.Snapshot,
+	members map[uint64]string,
+	fs vfs.IFS,
+	membershipImmovable bool,
+) pb.Snapshot {
 	for _, file := range old.Files {
 		file.Filepath = fs.PathJoin(dstDir, fs.PathBase(file.Filepath))
 	}
@@ -406,8 +417,24 @@ func GetProcessedSnapshotRecord(dstDir string,
 	for nid := range old.Membership.Removed {
 		ss.Membership.Removed[nid] = true
 	}
+	plog.Infof("all members are %+v, normal addresses are %+v, "+
+		"non-voting nodes are %+v, witness nodes are %+v, and immovable is %v",
+		members, old.Membership.Addresses, old.Membership.NonVotings,
+		old.Membership.Witnesses, membershipImmovable)
 	for nid, addr := range members {
-		ss.Membership.Addresses[nid] = addr
+		if membershipImmovable {
+			if _, ok := old.Membership.Addresses[nid]; ok {
+				ss.Membership.Addresses[nid] = addr
+			}
+			if _, ok := old.Membership.NonVotings[nid]; ok {
+				ss.Membership.NonVotings[nid] = addr
+			}
+			if _, ok := old.Membership.Witnesses[nid]; ok {
+				ss.Membership.Witnesses[nid] = addr
+			}
+		} else {
+			ss.Membership.Addresses[nid] = addr
+		}
 	}
 	return ss
 }

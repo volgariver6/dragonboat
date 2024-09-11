@@ -51,5 +51,9 @@ func (r *NodeHostRegistry) GetShardInfo(shardID uint64) (ShardView, bool) {
 	for shardID, target := range ci.Nodes {
 		result.Nodes[shardID] = target
 	}
+	result.NonVotingNodes = make(map[uint64]string)
+	for shardID, target := range ci.NonVotingNodes {
+		result.NonVotingNodes[shardID] = target
+	}
 	return result, true
 }

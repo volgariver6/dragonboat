@@ -945,6 +945,11 @@ type ExpertConfig struct {
 	// the case that you want to move the data directory from old node to a new
 	// one.
 	VerifyHostnameChanged bool
+	// MembershipImmovable indicates if keep the membership as the one in the
+	// snapshot. If it is true, all non-voting nodes and witness nodes will
+	// change to normal nodes when startup, otherwise, keep their roles as
+	// in snapshot. Default value is false.
+	MembershipImmovable bool
 }
 
 // GossipConfig contains configurations for the gossip service. Gossip service

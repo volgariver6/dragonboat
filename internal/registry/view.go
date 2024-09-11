@@ -122,6 +122,7 @@ func (v *view) shardCount() int {
 func mergeShardInfo(current ShardView, update ShardView) ShardView {
 	if current.ConfigChangeIndex < update.ConfigChangeIndex {
 		current.Nodes = update.Nodes
+		current.NonVotingNodes = update.NonVotingNodes
 		current.ConfigChangeIndex = update.ConfigChangeIndex
 	}
 	// we only keep which replica is the last known leader
