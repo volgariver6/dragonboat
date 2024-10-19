@@ -785,6 +785,13 @@ func (nh *NodeHost) QueryRaftLog(shardID uint64, firstIndex uint64,
 	return nh.queryRaftLog(shardID, firstIndex, lastIndex, maxSize)
 }
 
+func (nh *NodeHost) QueryLogLsn(shardID uint64, ts time.Time) (*RequestState, error) {
+	if ts.IsZero() {
+		return nil, errors.New("empty ts is not allowed")
+	}
+	return nh.queryLogLsn(shardID, ts)
+}
+
 // Propose starts an asynchronous proposal on the Raft shard specified by the
 // Session object. The input byte slice can be reused for other purposes
 // immediate after the return of this method.
@@ -1521,6 +1528,19 @@ func (nh *NodeHost) queryRaftLog(shardID uint64,
 		return nil, ErrInvalidRange
 	}
 	req, err := v.queryRaftLog(firstIndex, lastIndex, maxSize)
+	nh.engine.setStepReady(shardID)
+	return req, err
+}
+
+func (nh *NodeHost) queryLogLsn(shardID uint64, ts time.Time) (*RequestState, error) {
+	if atomic.LoadInt32(&nh.closed) != 0 {
+		return nil, ErrClosed
+	}
+	v, ok := nh.getShard(shardID)
+	if !ok {
+		return nil, ErrShardNotFound
+	}
+	req, err := v.queryLogLsn(ts)
 	nh.engine.setStepReady(shardID)
 	return req, err
 }

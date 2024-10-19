@@ -19,17 +19,18 @@ configurations.
 package config
 
 import (
+	"context"
 	"crypto/tls"
+	"fmt"
+	"io"
 	"net"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"time"
+	"unsafe"
 
 	"github.com/cockroachdb/errors"
-	"github.com/lni/goutils/netutil"
-	"github.com/lni/goutils/stringutil"
-
 	"github.com/lni/dragonboat/v4/internal/fileutil"
 	"github.com/lni/dragonboat/v4/internal/id"
 	"github.com/lni/dragonboat/v4/internal/settings"
@@ -37,6 +38,8 @@ import (
 	"github.com/lni/dragonboat/v4/logger"
 	"github.com/lni/dragonboat/v4/raftio"
 	pb "github.com/lni/dragonboat/v4/raftpb"
+	"github.com/lni/goutils/netutil"
+	"github.com/lni/goutils/stringutil"
 )
 
 var (
@@ -776,6 +779,7 @@ type LogDBConfig struct {
 	KVBlockSize                        uint64
 	SaveBufferSize                     uint64
 	MaxSaveBufferSize                  uint64
+	MaxLogFileSize                     uint64
 }
 
 // GetDefaultLogDBConfig returns the default configurations for the LogDB
@@ -950,6 +954,8 @@ type ExpertConfig struct {
 	// change to normal nodes when startup, otherwise, keep their roles as
 	// in snapshot. Default value is false.
 	MembershipImmovable bool
+	// ArchiveIO is the IO interface for read/write operation.
+	ArchiveIO ArchiveIO
 }
 
 // GossipConfig contains configurations for the gossip service. Gossip service
@@ -1038,4 +1044,70 @@ func isValidAdvertiseAddress(addr string) bool {
 	}
 	// the memberlist package allow domain name as advertise address.
 	return true
+}
+
+// ArchiveIO is the interface used to read from and write to
+type ArchiveIO interface {
+	// Write uploads the log file to the storage. The parameter
+	// is the local file path.
+	Write(ctx context.Context, subDir, filePath string) error
+	// List lists all the files in the directory.
+	List(ctx context.Context, subDir string) ([]string, error)
+	// Open opens log file from the storage and returns an io.Reader
+	// to read from it.
+	Open(ctx context.Context, subDir, filename string) (io.ReadCloser, error)
+	// Download downloads the file in the archived store into local directory.
+	Download(ctx context.Context, subDir, filename, dstFile string) error
+	// Delete deletes multiple files in the remote storage.
+	Delete(ctx context.Context, subDir string, files ...string) error
+}
+
+type RecordItem struct {
+	// FileNum is the number of log file and index file.
+	FileNum uint64
+	// TS is the timestamp of the file.
+	TS time.Time
+	// FirstLsn is the first LSN of the file.
+	FirstLsn uint64
+}
+
+func (i *RecordItem) Size() int64 {
+	return int64(unsafe.Sizeof(i.FileNum) +
+		unsafe.Sizeof(i.TS.UnixNano()) +
+		unsafe.Sizeof(i.FirstLsn))
+}
+
+func (i *RecordItem) Marshal() ([]byte, error) {
+	put := func(buf []byte, x uint64) int {
+		sz := int(unsafe.Sizeof(x))
+		for i := 0; i < sz; i++ {
+			buf[i] = byte(x)
+			x >>= 8
+		}
+		return sz
+	}
+	buf := make([]byte, i.Size())
+	n := put(buf, i.FileNum)
+	n += put(buf[n:], uint64(i.TS.UnixNano()))
+	n += put(buf[n:], i.FirstLsn)
+	return buf, nil
+}
+
+func (i *RecordItem) Unmarshal(p []byte) error {
+	sz := i.Size()
+	if sz != int64(len(p)) {
+		return fmt.Errorf("wrong size, expect %d, got %d", sz, len(p))
+	}
+	get := func(buf []byte) uint64 {
+		var ret uint64
+		for i := 0; i < 8; i++ {
+			ret |= uint64(buf[i]) << (i * 8)
+		}
+		return ret
+	}
+	i.FileNum = get(p)
+	ts := get(p[8:])
+	i.TS = time.Unix(int64(ts/1e9), int64(ts%1e9))
+	i.FirstLsn = get(p[16:])
+	return nil
 }

@@ -39,7 +39,9 @@ package tan
 import (
 	"io"
 	"sync"
+	"time"
 
+	"github.com/cockroachdb/errors"
 	"github.com/lni/dragonboat/v4/config"
 	"github.com/lni/dragonboat/v4/internal/fileutil"
 	"github.com/lni/dragonboat/v4/raftio"
@@ -127,11 +129,17 @@ func createTan(cfg config.NodeHostConfig, cb config.LogDBCallback,
 	}
 	dirname := cfg.Expert.FS.PathJoin(dirs[0], defaultDBName)
 	ldb := &LogDB{
-		dirname:    dirname,
-		fs:         cfg.Expert.FS,
-		buffers:    make([][]byte, defaultShards),
-		wgs:        make([]*sync.WaitGroup, defaultShards),
-		collection: newCollection(dirname, cfg.Expert.FS, singleNodeLog),
+		dirname: dirname,
+		fs:      cfg.Expert.FS,
+		buffers: make([][]byte, defaultShards),
+		wgs:     make([]*sync.WaitGroup, defaultShards),
+		collection: newCollection(
+			dirname,
+			cfg.Expert.FS,
+			cfg.Expert.ArchiveIO,
+			cfg.Expert.LogDB.MaxLogFileSize,
+			singleNodeLog,
+		),
 	}
 	for i := 0; i < len(ldb.buffers); i++ {
 		ldb.buffers[i] = make([]byte, cfg.Expert.LogDB.KVWriteBufferSize)
@@ -467,4 +475,37 @@ func (l *LogDB) getDB(shardID uint64, replicaID uint64) (*db, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.collection.getDB(shardID, replicaID)
+}
+
+func (l *LogDB) ArchiveEnabled() bool {
+	return l.collection.archiveEnabled()
+}
+
+// GetLsnByTs gets the lsn according to the timestamp. It returns the first Lsn of an
+// index file, whose ts is less than the specified ts.
+func (l *LogDB) GetLsnByTs(shardID uint64, replicaID uint64, ts time.Time) (uint64, error) {
+	db, err := l.getDB(shardID, replicaID)
+	if err != nil {
+		return 0, err
+	}
+	if db.archiver == nil {
+		return 0, errors.New("log archive is not enabled")
+	}
+	lsn, committed, err := db.archiver.recorder.searchByTS(ts)
+	if err != nil {
+		return 0, err
+	}
+	if !committed {
+		db.readState.RLock()
+		defer db.readState.RUnlock()
+		nIndex := db.readState.val.nodeStates.getIndex(shardID, replicaID)
+		if nIndex == nil {
+			return 0, errors.Newf("failed to get node index for shard %d, replica %d", shardID, replicaID)
+		}
+		if len(nIndex.entries.entries) == 0 {
+			return 0, errors.Newf("no index found locally for shard %d, replica %d", shardID, replicaID)
+		}
+		return nIndex.entries.entries[0].start, nil
+	}
+	return lsn, nil
 }

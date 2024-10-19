@@ -19,6 +19,7 @@ import (
 
 	"github.com/cockroachdb/errors/oserror"
 
+	"github.com/lni/dragonboat/v4/config"
 	"github.com/lni/dragonboat/v4/internal/fileutil"
 	"github.com/lni/dragonboat/v4/raftio"
 	"github.com/lni/vfs"
@@ -127,9 +128,15 @@ type collection struct {
 	fs      vfs.FS
 	dirname string
 	keeper  dbKeeper
+	// maxLogFileSize is the max size of the log file.
+	maxLogFileSize uint64
+	// archiveIO archives the log and index file to remote storage.
+	archiveIO config.ArchiveIO
 }
 
-func newCollection(dirname string, fs vfs.FS, regular bool) collection {
+func newCollection(
+	dirname string, fs vfs.FS, archiveIO config.ArchiveIO, maxLogFileSize uint64, regular bool,
+) collection {
 	var k dbKeeper
 	if regular {
 		k = newRegularDBKeeper()
@@ -137,9 +144,11 @@ func newCollection(dirname string, fs vfs.FS, regular bool) collection {
 		k = newMultiplexedDBKeeper()
 	}
 	return collection{
-		fs:      fs,
-		dirname: dirname,
-		keeper:  k,
+		fs:             fs,
+		dirname:        dirname,
+		keeper:         k,
+		maxLogFileSize: maxLogFileSize,
+		archiveIO:      archiveIO,
 	}
 }
 
@@ -161,7 +170,17 @@ func (c *collection) getDB(shardID uint64, replicaID uint64) (*db, error) {
 	if err := c.prepareDir(dbdir); err != nil {
 		return nil, err
 	}
-	db, err := open(dbdir, dbdir, &Options{FS: c.fs})
+	db, err := open(
+		shardID,
+		replicaID,
+		dbdir,
+		dbdir,
+		&Options{
+			MaxLogFileSize: int64(c.maxLogFileSize),
+			FS:             c.fs,
+			archiveIO:      c.archiveIO,
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -180,4 +199,8 @@ func (c *collection) prepareDir(dbdir string) error {
 
 func (c *collection) iterate(f func(*db) error) error {
 	return c.keeper.iterate(f)
+}
+
+func (c *collection) archiveEnabled() bool {
+	return c.archiveIO != nil
 }

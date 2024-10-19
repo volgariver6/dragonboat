@@ -17,6 +17,7 @@ package dragonboat
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/lni/goutils/logutil"
@@ -323,7 +324,8 @@ func (n *node) processLogQuery(r pb.LogQueryResult) {
 	}
 	outOfRange := false
 	if r.Error != nil {
-		if errors.Is(r.Error, raft.ErrCompacted) {
+		if errors.Is(r.Error, raft.ErrCompacted) ||
+			errors.Is(r.Error, raftio.ErrArchiveItemNotFound) {
 			outOfRange = true
 		} else {
 			panic(r.Error)
@@ -524,6 +526,16 @@ func (n *node) queryRaftLog(firstIndex uint64,
 		return nil, ErrInvalidOperation
 	}
 	return n.pendingRaftLogQuery.add(firstIndex, lastIndex, maxSize)
+}
+
+func (n *node) queryLogLsn(ts time.Time) (*RequestState, error) {
+	if !n.initialized() {
+		return nil, ErrShardNotReady
+	}
+	if n.isWitness() {
+		return nil, ErrInvalidOperation
+	}
+	return n.pendingRaftLogQuery.addTs(ts)
 }
 
 func (n *node) reportIgnoredSnapshotRequest(key uint64) {
@@ -1266,6 +1278,13 @@ func (n *node) handleCompaction() bool {
 
 func (n *node) handleLogQuery() (bool, error) {
 	if req := n.pendingRaftLogQuery.get(); req != nil {
+		if !req.ts.IsZero() {
+			if err := n.p.QueryRaftLogLsn(uint64(req.ts.UnixNano())); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+
 		if err := n.p.QueryRaftLog(req.logRange.FirstIndex,
 			req.logRange.LastIndex, req.maxSize); err != nil {
 			return false, err

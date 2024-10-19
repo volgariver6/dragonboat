@@ -20,12 +20,17 @@ package tan
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"io"
 	"math"
+	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 
 	"github.com/cockroachdb/errors"
+	"github.com/lni/dragonboat/v4/internal/raft"
 	"github.com/lni/dragonboat/v4/logger"
 	"github.com/lni/dragonboat/v4/raftio"
 	pb "github.com/lni/dragonboat/v4/raftpb"
@@ -56,16 +61,18 @@ var (
 // db is basically an instance of the core tan storage, it holds required
 // resources and manages log and index data.
 type db struct {
+	ctx      context.Context
+	cancel   context.CancelFunc
 	name     string
 	closed   atomic.Value
 	closedCh chan struct{}
 	opts     *Options
 	dataDir  vfs.File
 	dirname  string
+	stopper  *syncutil.Stopper
 
 	// for asynchronously delete files in the background
-	deleteObsoleteCh     chan struct{}
-	deleteobsoleteWorker *syncutil.Stopper
+	deleteObsoleteCh chan struct{}
 
 	// help to determine what is the current visible view of the data
 	readState struct {
@@ -82,7 +89,11 @@ type db struct {
 		logWriter  *writer
 		versions   *versionSet
 		nodeStates *nodeStates
+		lsn        uint64
 	}
+
+	// archiver is used to archive the log files.
+	archiver *archiver
 }
 
 // stateSyncChange returns true iif the states are valid and not equal.
@@ -155,6 +166,9 @@ func (d *db) updateIndex(update pb.Update, pos int64, logNum fileNum) {
 			ei.end = update.EntriesToSave[len(update.EntriesToSave)-1].Index
 			index.entries.update(ei)
 			index.currEntries.update(ei)
+
+			// update the lsn to the end of indexes.
+			d.mu.lsn = ei.end
 		}
 		// regular snapshot
 		if !pb.IsEmptySnapshot(update.Snapshot) {
@@ -255,6 +269,55 @@ func (d *db) getRaftState(shardID uint64, replicaID uint64,
 	return st, nil
 }
 
+// loadArchivedNodeStates loads the node states from the archived index files.
+func (d *db) loadArchivedNodeStates() (*nodeStates, error) {
+	if d.archiver == nil {
+		return nil, fmt.Errorf("archiver not initialized")
+	}
+	files, err := d.archiver.List(d.ctx, d.archiver.subDir)
+	if err != nil {
+		return nil, err
+	}
+	type fileNumAndName struct {
+		num  fileNum
+		name string
+	}
+	var indexFiles []fileNumAndName
+	for _, filename := range files {
+		ft, fn, ok := parseFilename(d.opts.FS, filename)
+		if !ok {
+			continue
+		}
+		if ft == fileTypeIndex {
+			indexFiles = append(indexFiles, fileNumAndName{fn, filename})
+		}
+	}
+	sort.Slice(indexFiles, func(i, j int) bool {
+		return indexFiles[i].num < indexFiles[j].num
+	})
+
+	ns := newNodeStates()
+	for _, indexFile := range indexFiles {
+		file, err := d.archiver.Open(
+			d.ctx,
+			d.archiver.subDir,
+			fmt.Sprintf("%s.index", indexFile.num),
+		)
+		if err != nil {
+			return nil, err
+		}
+		if err := ns.load(file); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		closeErr := file.Close()
+		if closeErr != nil {
+			return nil, closeErr
+		}
+	}
+	return ns, nil
+}
+
 // getEntries queries the db to return raft entries between [low, high), the
 // max size of the returned entries is maxSize bytes. The results will be
 // appended into the input entries slice which is already size bytes in size.
@@ -264,16 +327,38 @@ func (d *db) getRaftState(shardID uint64, replicaID uint64,
 func (d *db) getEntries(shardID uint64, replicaID uint64,
 	entries []pb.Entry, size uint64, low uint64,
 	high uint64, maxSize uint64) ([]pb.Entry, uint64, error) {
-	d.mu.Lock()
-	readState := d.loadReadState()
-	ies, ok := readState.nodeStates.query(shardID, replicaID, low, high)
-	compactedTo := readState.nodeStates.compactedTo(shardID, replicaID)
-	d.mu.Unlock()
-	defer readState.unref()
-	if !ok {
-		return entries, size, nil
-	}
-	if low <= compactedTo {
+	var err error
+	var ies []indexEntry
+	var ok bool
+	if err := func() error {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		readState := d.loadReadState()
+		defer readState.unref()
+		ns := readState.nodeStates
+		if ns == nil {
+			return fmt.Errorf("nodeStates not loaded")
+		}
+		ies, ok = ns.query(shardID, replicaID, low, high)
+		if !ok {
+			ns, err = d.loadArchivedNodeStates()
+			if err != nil {
+				return err
+			}
+			if err := ns.mergeStates(readState.nodeStates); err != nil {
+				return err
+			}
+			ies, ok = ns.query(shardID, replicaID, low, high)
+			if !ok {
+				return fmt.Errorf("cannot get indexes for logs between %d and %d", low, high)
+			}
+		}
+		compactedTo := ns.compactedTo(shardID, replicaID)
+		if low <= compactedTo {
+			return raft.ErrCompacted
+		}
+		return nil
+	}(); err != nil {
 		return entries, size, nil
 	}
 	if maxSize == 0 {
@@ -403,9 +488,27 @@ func (d *db) getEntriesWithMultiplexed(shardID uint64, replicaID uint64,
 func (d *db) readLog(ie indexEntry,
 	h func(u pb.Update, offset int64) bool) (err error) {
 	fn := makeFilename(d.opts.FS, d.dirname, fileTypeLog, ie.fileNum)
-	f, err := d.opts.FS.Open(fn)
+	var f vfs.File
+	f, err = d.opts.FS.Open(fn)
 	if err != nil {
-		return err
+		// Cannot find log file locally, we try to get the log from archived store.
+		if errors.Is(err, os.ErrNotExist) && d.archiver.isActive() {
+			err = d.archiver.Download(d.archiver.ctx,
+				d.archiver.subDir,
+				fn,
+				fn,
+			)
+			if err != nil {
+				return errors.Wrap(err, "failed to download log")
+			}
+			defer d.opts.FS.Remove(fn)
+			f, err = d.opts.FS.Open(fn)
+			if err != nil {
+				return errors.Wrap(err, "failed to open archived log")
+			}
+		} else {
+			return err
+		}
 	}
 	defer func() {
 		err = firstError(err, f.Close())

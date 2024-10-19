@@ -17,6 +17,7 @@ package tan
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"sort"
@@ -314,6 +315,57 @@ func (i *index) removeObsolete(maxObsoleteFileNum fileNum) []fileNum {
 		i.entries = append(make([]indexEntry, 0), i.entries[index+1:]...)
 		return obsolete
 	}
+	return nil
+}
+
+// merge merges the entries in i1 into i.
+// they have to be sorted before merge.
+func (i *index) merge(i1 *index) error {
+	if len(i.entries) == 0 {
+		i.entries = make([]indexEntry, len(i1.entries))
+		i.entries = append(i.entries, i1.entries...)
+		i.compactedTo = i1.compactedTo
+		return nil
+	}
+	if len(i1.entries) == 0 {
+		return nil
+	}
+
+	// merge i1 to i.
+	if i.entries[0].fileNum <= i1.entries[0].fileNum {
+		if i1.entries[0].fileNum-i.entries[len(i.entries)-1].fileNum > 1 {
+			return fmt.Errorf("gap 1 between indexes: %d, %d",
+				i.entries[len(i.entries)-1].fileNum,
+				i1.entries[0].fileNum,
+			)
+		}
+		lastFileNum := i.entries[len(i.entries)-1].fileNum
+		for _, e := range i1.entries {
+			if e.fileNum > lastFileNum {
+				i.entries = append(i.entries, e)
+			}
+		}
+	} else { // merge i to i1
+		if i.entries[0].fileNum-i1.entries[len(i1.entries)-1].fileNum > 1 {
+			return fmt.Errorf("gap 2 between indexes: %d, %d",
+				i1.entries[len(i1.entries)-1].fileNum,
+				i.entries[0].fileNum,
+			)
+		}
+		entries := make([]indexEntry, 0, len(i1.entries)+len(i.entries))
+		for _, e := range i1.entries {
+			entries = append(entries, e)
+		}
+		lastFileNum := entries[len(entries)-1].fileNum
+		for _, e := range i.entries {
+			if e.fileNum > lastFileNum {
+				entries = append(entries, e)
+			}
+		}
+		i.entries = entries
+		i.compactedTo = i1.compactedTo
+	}
+
 	return nil
 }
 

@@ -19,6 +19,7 @@
 package tan
 
 import (
+	"github.com/lni/dragonboat/v4/config"
 	"github.com/lni/vfs"
 )
 
@@ -34,6 +35,8 @@ type Options struct {
 	MaxLogFileSize      int64
 	MaxManifestFileSize int64
 	FS                  vfs.FS
+	// archiveIO is used to archive the log files to remote storage.
+	archiveIO config.ArchiveIO
 }
 
 // EnsureDefaults ensures that the default values for all options are set if a

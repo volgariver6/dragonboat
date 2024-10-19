@@ -866,7 +866,10 @@ func TestIndexSaveLoad(t *testing.T) {
 	require.NoError(t, nodeStates.save(dirname, dir, fileNum(1), fs))
 
 	loaded := newNodeStates()
-	require.NoError(t, loaded.load(dirname, fileNum(1), fs))
+	file, openErr := fs.Open(makeFilename(fs, dirname, fileTypeIndex, 1))
+	require.NoError(t, openErr)
+	defer file.Close()
+	require.NoError(t, loaded.load(file))
 	require.Equal(t, 2, len(loaded.indexes))
 	require.Equal(t, i1.shardID, loaded.indexes[ni1].shardID)
 	require.Equal(t, i1.replicaID, loaded.indexes[ni1].replicaID)
@@ -898,7 +901,10 @@ func TestIndexLoadIsAppendOnly(t *testing.T) {
 	defer dir.Close()
 	require.NoError(t, nodeStates.save(dirname, dir, fileNum(5), fs))
 	loaded := newNodeStates()
-	require.NoError(t, loaded.load(dirname, fileNum(5), fs))
+	file, openErr := fs.Open(makeFilename(fs, dirname, fileTypeIndex, 5))
+	require.NoError(t, openErr)
+	defer file.Close()
+	require.NoError(t, loaded.load(file))
 	require.Equal(t, currEntries, loaded.indexes[ni1].entries)
 }
 
@@ -1025,4 +1031,113 @@ func TestStateGetObsolete(t *testing.T) {
 	expected := []fileNum{1, 2, 6, 25}
 	result := nodeStates.getObsolete(input)
 	require.Equal(t, expected, result)
+}
+
+func TestNodeStatesMerge(t *testing.T) {
+	ni1 := raftio.NodeInfo{ShardID: 1, ReplicaID: 1}
+	ni2 := raftio.NodeInfo{ShardID: 2, ReplicaID: 1}
+
+	index1 := &nodeIndex{}
+	ns1 := newNodeStates()
+	ns1.indexes[ni1] = index1
+	ns1.indexes[ni2] = &nodeIndex{}
+	index1.entries.append(indexEntry{1, 100, 1, 10, 10})
+
+	index2 := &nodeIndex{}
+	ns2 := newNodeStates()
+	ns2.indexes[ni1] = index2
+	index1.entries.append(indexEntry{101, 200, 2, 10, 10})
+
+	require.NoError(t, ns1.mergeStates(ns2))
+
+	es, ok := ns1.query(1, 1, 1, 200)
+	require.True(t, ok)
+	require.Equal(t, 2, len(es))
+}
+
+func TestIndexMerge(t *testing.T) {
+	t.Run("left empty", func(t *testing.T) {
+		nodeStates := newNodeStates()
+		ni1 := raftio.NodeInfo{ShardID: 1, ReplicaID: 1}
+		index1 := &nodeIndex{}
+		nodeStates.indexes[ni1] = index1
+		index2 := &nodeIndex{}
+		index2.entries.append(indexEntry{1, 100, 1, 10, 10})
+		index2.entries.append(indexEntry{101, 200, 2, 10, 10})
+		require.NoError(t, index1.entries.merge(&index2.entries))
+		es, ok := nodeStates.query(1, 1, 1, 200)
+		require.True(t, ok)
+		require.Equal(t, 2, len(es))
+	})
+
+	t.Run("right empty", func(t *testing.T) {
+		nodeStates := newNodeStates()
+		ni1 := raftio.NodeInfo{ShardID: 1, ReplicaID: 1}
+		index1 := &nodeIndex{}
+		nodeStates.indexes[ni1] = index1
+		index1.entries.append(indexEntry{1, 100, 1, 10, 10})
+		index1.entries.append(indexEntry{101, 200, 2, 10, 10})
+		index2 := &nodeIndex{}
+		require.NoError(t, index1.entries.merge(&index2.entries))
+		es, ok := nodeStates.query(1, 1, 1, 200)
+		require.True(t, ok)
+		require.Equal(t, 2, len(es))
+	})
+
+	t.Run("merge right", func(t *testing.T) {
+		nodeStates := newNodeStates()
+		ni1 := raftio.NodeInfo{ShardID: 1, ReplicaID: 1}
+		index1 := &nodeIndex{}
+		nodeStates.indexes[ni1] = index1
+		index1.entries.append(indexEntry{1, 100, 1, 10, 10})
+		index2 := &nodeIndex{}
+		index2.entries.append(indexEntry{1, 100, 1, 10, 10})
+		index2.entries.append(indexEntry{101, 200, 2, 10, 10})
+		require.NoError(t, index1.entries.merge(&index2.entries))
+		es, ok := nodeStates.query(1, 1, 1, 200)
+		require.True(t, ok)
+		require.Equal(t, 2, len(es))
+	})
+
+	t.Run("merge left", func(t *testing.T) {
+		nodeStates := newNodeStates()
+		ni1 := raftio.NodeInfo{ShardID: 1, ReplicaID: 1}
+		index1 := &nodeIndex{}
+		nodeStates.indexes[ni1] = index1
+		index1.entries.append(indexEntry{101, 200, 2, 10, 10})
+		index2 := &nodeIndex{}
+		index2.entries.append(indexEntry{1, 100, 1, 10, 10})
+		require.NoError(t, index1.entries.merge(&index2.entries))
+		es, ok := nodeStates.query(1, 1, 1, 200)
+		require.True(t, ok)
+		require.Equal(t, 2, len(es))
+	})
+
+	t.Run("left gap", func(t *testing.T) {
+		nodeStates := newNodeStates()
+		ni1 := raftio.NodeInfo{ShardID: 1, ReplicaID: 1}
+		index1 := &nodeIndex{}
+		nodeStates.indexes[ni1] = index1
+		index1.entries.append(indexEntry{1, 100, 1, 10, 10})
+		index2 := &nodeIndex{}
+		index2.entries.append(indexEntry{201, 300, 3, 10, 10})
+		require.Error(t, index1.entries.merge(&index2.entries))
+		es, ok := nodeStates.query(1, 1, 1, 200)
+		require.True(t, ok)
+		require.Equal(t, 1, len(es))
+	})
+
+	t.Run("right gap", func(t *testing.T) {
+		nodeStates := newNodeStates()
+		ni1 := raftio.NodeInfo{ShardID: 1, ReplicaID: 1}
+		index1 := &nodeIndex{}
+		nodeStates.indexes[ni1] = index1
+		index1.entries.append(indexEntry{201, 300, 3, 10, 10})
+		index2 := &nodeIndex{}
+		index2.entries.append(indexEntry{1, 100, 1, 10, 10})
+		require.Error(t, index1.entries.merge(&index2.entries))
+		es, ok := nodeStates.query(1, 1, 201, 300)
+		require.True(t, ok)
+		require.Equal(t, 1, len(es))
+	})
 }

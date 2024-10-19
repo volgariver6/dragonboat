@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"sync/atomic"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/lni/goutils/syncutil"
@@ -364,6 +365,14 @@ func (s *ShardedDB) compact() error {
 			return nil
 		}
 	}
+}
+
+func (s *ShardedDB) ArchiveEnabled() bool {
+	return false
+}
+
+func (s *ShardedDB) GetLsnByTs(shardID uint64, replicaID uint64, ts time.Time) (uint64, error) {
+	return 0, nil
 }
 
 func panicNow(err error) {

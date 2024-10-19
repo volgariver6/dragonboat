@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/lni/goutils/logutil"
@@ -48,7 +49,7 @@ const (
 	// NoNode is the flag used to indicate that the node id field is not set.
 	NoNode          uint64 = 0
 	noLimit         uint64 = math.MaxUint64
-	numMessageTypes uint64 = 29
+	numMessageTypes uint64 = 30
 )
 
 var (
@@ -1757,6 +1758,20 @@ func (r *raft) handleLogQuery(m pb.Message) error {
 	return nil
 }
 
+func (r *raft) handleLogLsnQuery(m pb.Message) error {
+	if r.logQueryResult == nil {
+		ts := time.Unix(int64(m.From/1e9), int64(m.From%1e9))
+		lsn, err := r.log.getLsnByTs(ts)
+		r.logQueryResult = &pb.LogQueryResult{
+			FirstIndex: lsn,
+			Error:      err,
+		}
+	} else {
+		panic("log query result is not nil")
+	}
+	return nil
+}
+
 func (r *raft) handleLocalTick(m pb.Message) error {
 	if m.Reject {
 		r.quiescedTick()
@@ -2349,6 +2364,7 @@ func (r *raft) initializeHandlerMap() {
 	r.handlers[candidate][pb.LocalTick] = r.handleLocalTick
 	r.handlers[candidate][pb.SnapshotReceived] = r.handleRestoreRemote
 	r.handlers[candidate][pb.LogQuery] = r.handleLogQuery
+	r.handlers[candidate][pb.LogLsnQuery] = r.handleLogLsnQuery
 	// prevote candidate
 	r.handlers[preVoteCandidate][pb.Heartbeat] = r.handleCandidateHeartbeat
 	r.handlers[preVoteCandidate][pb.Propose] = r.handleCandidatePropose
@@ -2363,6 +2379,7 @@ func (r *raft) initializeHandlerMap() {
 	r.handlers[preVoteCandidate][pb.LocalTick] = r.handleLocalTick
 	r.handlers[preVoteCandidate][pb.SnapshotReceived] = r.handleRestoreRemote
 	r.handlers[preVoteCandidate][pb.LogQuery] = r.handleLogQuery
+	r.handlers[preVoteCandidate][pb.LogLsnQuery] = r.handleLogLsnQuery
 	// follower
 	r.handlers[follower][pb.Propose] = r.handleFollowerPropose
 	r.handlers[follower][pb.Replicate] = r.handleFollowerReplicate
@@ -2379,6 +2396,7 @@ func (r *raft) initializeHandlerMap() {
 	r.handlers[follower][pb.LocalTick] = r.handleLocalTick
 	r.handlers[follower][pb.SnapshotReceived] = r.handleRestoreRemote
 	r.handlers[follower][pb.LogQuery] = r.handleLogQuery
+	r.handlers[follower][pb.LogLsnQuery] = r.handleLogLsnQuery
 	// leader
 	r.handlers[leader][pb.LeaderHeartbeat] = r.handleLeaderHeartbeat
 	r.handlers[leader][pb.CheckQuorum] = r.handleLeaderCheckQuorum
@@ -2397,6 +2415,7 @@ func (r *raft) initializeHandlerMap() {
 	r.handlers[leader][pb.SnapshotReceived] = r.handleRestoreRemote
 	r.handlers[leader][pb.RateLimit] = r.handleLeaderRateLimit
 	r.handlers[leader][pb.LogQuery] = r.handleLogQuery
+	r.handlers[leader][pb.LogLsnQuery] = r.handleLogLsnQuery
 	// nonVoting
 	r.handlers[nonVoting][pb.Heartbeat] = r.handleNonVotingHeartbeat
 	r.handlers[nonVoting][pb.Replicate] = r.handleNonVotingReplicate
@@ -2410,6 +2429,7 @@ func (r *raft) initializeHandlerMap() {
 	r.handlers[nonVoting][pb.LocalTick] = r.handleLocalTick
 	r.handlers[nonVoting][pb.SnapshotReceived] = r.handleRestoreRemote
 	r.handlers[nonVoting][pb.LogQuery] = r.handleLogQuery
+	r.handlers[nonVoting][pb.LogLsnQuery] = r.handleLogLsnQuery
 	// witness
 	r.handlers[witness][pb.Heartbeat] = r.handleWitnessHeartbeat
 	r.handlers[witness][pb.Replicate] = r.handleWitnessReplicate

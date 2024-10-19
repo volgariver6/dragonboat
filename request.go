@@ -293,6 +293,7 @@ type RequestState struct {
 	seriesID       uint64
 	respondedTo    uint64
 	deadline       uint64
+	ts             time.Time
 	logRange       LogRange
 	maxSize        uint64
 	readyToRead    ready
@@ -1249,6 +1250,21 @@ func (p *pendingRaftLogQuery) add(firstIndex uint64,
 	req := &RequestState{
 		logRange:   LogRange{FirstIndex: firstIndex, LastIndex: lastIndex},
 		maxSize:    maxSize,
+		CompletedC: make(chan RequestResult, 1),
+	}
+	p.mu.pending = req
+
+	return req, nil
+}
+
+func (p *pendingRaftLogQuery) addTs(ts time.Time) (*RequestState, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.mu.pending != nil {
+		return nil, ErrSystemBusy
+	}
+	req := &RequestState{
+		ts:         ts,
 		CompletedC: make(chan RequestResult, 1),
 	}
 	p.mu.pending = req

@@ -103,6 +103,13 @@ func (p *Peer) QueryRaftLog(firstIndex uint64,
 	})
 }
 
+func (p *Peer) QueryRaftLogLsn(ts uint64) error {
+	return p.raft.Handle(pb.Message{
+		Type: pb.LogLsnQuery,
+		From: ts,
+	})
+}
+
 // RequestLeaderTransfer makes a request to transfer the leadership to the
 // specified target node.
 func (p *Peer) RequestLeaderTransfer(target uint64) error {

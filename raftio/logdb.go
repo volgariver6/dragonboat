@@ -15,6 +15,8 @@
 package raftio
 
 import (
+	"time"
+
 	"github.com/cockroachdb/errors"
 
 	pb "github.com/lni/dragonboat/v4/raftpb"
@@ -25,6 +27,8 @@ var (
 	ErrNoSavedLog = errors.New("no saved log")
 	// ErrNoBootstrapInfo indicates that there is no saved bootstrap info.
 	ErrNoBootstrapInfo = errors.New("no bootstrap info")
+	// ErrArchiveItemNotFound indicates that the archive item is not found.
+	ErrArchiveItemNotFound = errors.New("cannot find the record item")
 )
 
 // Metrics is the metrics of the LogDB.
@@ -107,4 +111,9 @@ type ILogDB interface {
 	// ImportSnapshot imports the specified snapshot by creating all required
 	// metadata in the logdb.
 	ImportSnapshot(snapshot pb.Snapshot, replicaID uint64) error
+	// ArchiveEnabled returns true if the archive logs feature is enabled.
+	ArchiveEnabled() bool
+	// GetLsnByTs gets the lsn according to the timestamp. It returns the first Lsn of an
+	// index file, whose ts is less than the specified ts.
+	GetLsnByTs(shardID uint64, replicaID uint64, ts time.Time) (uint64, error)
 }
