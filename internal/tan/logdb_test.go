@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/lni/dragonboat/v4/config"
 	pb "github.com/lni/dragonboat/v4/raftpb"
@@ -279,4 +280,95 @@ func TestConcurrentSaveRaftState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(30), ss3.Term)
 	require.Equal(t, uint64(1500), ss3.Index)
+}
+
+func TestGetLsnByTs(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	fs := vfs.NewMem()
+	cfg := config.NodeHostConfig{
+		Expert: config.ExpertConfig{
+			ArchiveIO: newMockArchiveIO(fs, "db-dir"),
+			FS:        fs,
+			LogDB: config.LogDBConfig{
+				MaxLogFileSize: 32, // one log file only contains one record
+			},
+		},
+	}
+	cfg.Prepare()
+	dirs := []string{"db-dir"}
+	ldb, err := CreateTan(cfg, nil, dirs, []string{})
+	require.NoError(t, err)
+	defer ldb.Close()
+
+	hs := pb.State{
+		Term:   2,
+		Vote:   3,
+		Commit: 100,
+	}
+	var ts8 time.Time
+	for i := uint64(0); i < 10; i++ {
+		e2 := pb.Entry{
+			Term:  2,
+			Index: i + 1,
+			Type:  pb.ApplicationEntry,
+			Cmd:   []byte("test data 2"),
+		}
+		if i == 8 {
+			ts8 = time.Now()
+		}
+		ud := pb.Update{
+			EntriesToSave: []pb.Entry{e2},
+			State:         hs,
+			ShardID:       1,
+			ReplicaID:     1,
+		}
+		require.NoError(t, ldb.SaveRaftState([]pb.Update{ud}, 1))
+	}
+	ts := time.Now()
+	_, err = ldb.GetLsnByTs(1, 1, ts)
+	require.Error(t, err)
+	require.NoError(t, ldb.RemoveEntriesTo(1, 1, 6))
+	timeout1 := time.NewTimer(time.Second * 3)
+	defer timeout1.Stop()
+	ticker1 := time.NewTicker(time.Millisecond * 10)
+	defer ticker1.Stop()
+FOR1:
+	for {
+		select {
+		case <-timeout1.C:
+			panic("failed to get lsn by ts")
+
+		case <-ticker1.C:
+			lsn, err := ldb.GetLsnByTs(1, 1, ts)
+			require.NoError(t, err)
+			if lsn == 7 {
+				break FOR1
+			}
+		}
+	}
+
+	require.NoError(t, ldb.RemoveEntriesTo(1, 1, 20))
+	lsn, err := ldb.GetLsnByTs(1, 1, ts)
+	require.NoError(t, err)
+	timeout2 := time.NewTimer(time.Second * 3)
+	defer timeout2.Stop()
+	ticker2 := time.NewTicker(time.Millisecond * 10)
+	defer ticker2.Stop()
+FOR2:
+	for {
+		select {
+		case <-timeout2.C:
+			panic("failed to get lsn by ts")
+
+		case <-ticker2.C:
+			lsn, err = ldb.GetLsnByTs(1, 1, ts8)
+			require.NoError(t, err)
+			if lsn == 8 {
+				break FOR2
+			} else {
+				t.Logf("lsn is %d", lsn)
+			}
+		}
+	}
+
 }

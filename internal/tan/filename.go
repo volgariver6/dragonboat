@@ -52,6 +52,8 @@ const (
 	fileTypeCurrent
 	fileTypeTemp
 	fileTypeBootstrapTemp
+	fileTypeArchive
+	fileTypeArchiveTemp
 )
 
 func setCurrentFile(dirname string, fs vfs.FS, fileNum fileNum) (err error) {
@@ -129,6 +131,10 @@ func makeFilename(fs vfs.FS, dirname string, fileType fileType, fileNum fileNum)
 		return fs.PathJoin(dirname, fmt.Sprintf("CURRENT-%s.dbtmp", fileNum))
 	case fileTypeBootstrapTemp:
 		panic("use makeBootstrapFilename")
+	case fileTypeArchive:
+		return fs.PathJoin(dirname, "ARCHIVE")
+	case fileTypeArchiveTemp:
+		return fs.PathJoin(dirname, "ARCHIVE.tmp")
 	}
 	panic("unreachable")
 }

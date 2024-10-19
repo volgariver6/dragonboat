@@ -35,6 +35,7 @@ const (
 	RequestPreVote     MessageType = 26
 	RequestPreVoteResp MessageType = 27
 	LogQuery           MessageType = 28
+	LogLsnQuery        MessageType = 29
 )
 
 var MessageType_name = map[int32]string{
@@ -67,6 +68,7 @@ var MessageType_name = map[int32]string{
 	26: "RequestPreVote",
 	27: "RequestPreVoteResp",
 	28: "LogQuery",
+	29: "LogLsnQuery",
 }
 
 var MessageType_value = map[string]int32{
@@ -99,6 +101,7 @@ var MessageType_value = map[string]int32{
 	"RequestPreVote":     26,
 	"RequestPreVoteResp": 27,
 	"LogQuery":           28,
+	"LogLsnQuery":        29,
 }
 
 func (x MessageType) String() string {

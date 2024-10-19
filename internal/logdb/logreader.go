@@ -35,6 +35,7 @@ package logdb
 import (
 	"fmt"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/lni/goutils/logutil"
@@ -128,7 +129,7 @@ func (lr *LogReader) entriesLocked(low uint64,
 	if low > high {
 		return nil, 0, fmt.Errorf("high (%d) < low (%d)", high, low)
 	}
-	if low <= lr.markerIndex {
+	if !lr.logdb.ArchiveEnabled() && low <= lr.markerIndex {
 		return nil, 0, raft.ErrCompacted
 	}
 	if high > lr.lastIndex()+1 {
@@ -332,4 +333,12 @@ func (lr *LogReader) Compact(index uint64) error {
 	lr.markerIndex = index
 	lr.markerTerm = term
 	return nil
+}
+
+func (lr *LogReader) ArchiveEnabled() bool {
+	return lr.logdb.ArchiveEnabled()
+}
+
+func (lr *LogReader) GetLsnByTs(ts time.Time) (uint64, error) {
+	return lr.logdb.GetLsnByTs(lr.shardID, lr.replicaID, ts)
 }

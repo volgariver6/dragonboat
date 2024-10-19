@@ -19,24 +19,31 @@
 package tan
 
 import (
+	"context"
 	"sort"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/errors/oserror"
+	"github.com/lni/dragonboat/v4/config"
 	pb "github.com/lni/dragonboat/v4/raftpb"
 	"github.com/lni/goutils/syncutil"
 )
 
 // open opens the tan db located in the folder called dirname.
-func open(name string, dirname string, opts *Options) (*db, error) {
+func open(shardID, replicaID uint64, name string, dirname string, opts *Options) (*db, error) {
 	opts = opts.EnsureDefaults()
+	ctx, cancel := context.WithCancel(context.Background())
 	d := &db{
-		name:                 name,
-		closedCh:             make(chan struct{}),
-		opts:                 opts,
-		dirname:              dirname,
-		deleteObsoleteCh:     make(chan struct{}, 1),
-		deleteobsoleteWorker: syncutil.NewStopper(),
+		ctx:              ctx,
+		cancel:           cancel,
+		name:             name,
+		closedCh:         make(chan struct{}),
+		opts:             opts,
+		dirname:          dirname,
+		deleteObsoleteCh: make(chan struct{}, 1),
+		stopper:          syncutil.NewStopper(),
+		archiver:         newArchiver(ctx, opts.archiveIO, dirname, opts.FS),
 	}
 	d.mu.versions = &versionSet{}
 	d.mu.nodeStates = newNodeStates()
@@ -123,9 +130,18 @@ func open(name string, dirname string, opts *Options) (*db, error) {
 		if _, ok := logFiles[indexFile.num]; !ok {
 			plog.Panicf("log file %d missing", indexFile.num)
 		}
-		if err := d.mu.nodeStates.load(dirname, indexFile.num, opts.FS); err != nil {
+		file, openErr := opts.FS.Open(makeFilename(opts.FS, dirname, fileTypeIndex, indexFile.num))
+		if openErr != nil {
+			return nil, openErr
+		}
+		if err := d.mu.nodeStates.load(file); err != nil {
+			_ = file.Close()
 			// TODO: we can actually regenerate the index when it is corrupted
 			return nil, err
+		}
+		closeErr := file.Close()
+		if closeErr != nil {
+			return nil, closeErr
 		}
 		delete(logFiles, indexFile.num)
 	}
@@ -156,8 +172,11 @@ func open(name string, dirname string, opts *Options) (*db, error) {
 		}
 	}
 
-	d.deleteobsoleteWorker.RunWorker(func() {
+	d.stopper.RunWorker(func() {
 		d.deleteObsoleteWorkerMain()
+	})
+	d.stopper.RunWorker(func() {
+		d.startArchiver()
 	})
 	d.scanObsoleteFiles(ls)
 	d.notifyDeleteObsoleteWorker()
@@ -194,7 +213,19 @@ func (d *db) createNewLog() error {
 		newFiles: []newFileEntry{{meta: &fileMetadata{fileNum: logNum}}},
 	}
 	d.mu.versions.logLock()
-	return d.mu.versions.logAndApply(&ve, d.dataDir)
+	err = d.mu.versions.logAndApply(&ve, d.dataDir)
+	if err != nil {
+		return err
+	}
+	// Update the local ARCHIVE file when the file is created, set commit to false here;
+	// set it to true after the log file and index file are written to remote storage.
+	item := config.RecordItem{
+		FileNum:  uint64(d.mu.logNum),
+		TS:       time.Now(),
+		FirstLsn: d.mu.lsn + 1,
+	}
+	d.archiver.addItem(item)
+	return nil
 }
 
 func (d *db) rebuildLogAndIndex(logNum fileNum) (err error) {
@@ -272,7 +303,8 @@ func (d *db) saveIndex() error {
 }
 
 func (d *db) close() error {
-	d.deleteobsoleteWorker.Stop()
+	d.cancel()
+	d.stopper.Stop()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if err := d.closed.Load(); err != nil {

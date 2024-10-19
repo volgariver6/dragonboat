@@ -15,6 +15,8 @@
 package raft
 
 import (
+	"time"
+
 	"github.com/cockroachdb/errors"
 
 	"github.com/lni/dragonboat/v4/internal/server"
@@ -70,6 +72,10 @@ type ILogDB interface {
 	// Append makes the given entries known to the ILogDB instance. This is
 	// usually not how entries are persisted.
 	Append(entries []pb.Entry) error
+	// ArchiveEnabled returns true if the archive logs feature is enabled.
+	ArchiveEnabled() bool
+	// GetLsnByTs gets the lsn according to the timestamp.
+	GetLsnByTs(ts time.Time) (uint64, error)
 }
 
 // entryLog is the entry log used by Raft. It splits entries into two parts -
@@ -162,7 +168,7 @@ func (l *entryLog) checkBound(low uint64, high uint64) error {
 	if !ok {
 		return ErrCompacted
 	}
-	if low < first {
+	if !l.logdb.ArchiveEnabled() && low < first {
 		return ErrCompacted
 	}
 	if high > last+1 {
@@ -279,7 +285,7 @@ func (l *entryLog) getEntriesToApply(limit uint64) ([]pb.Entry, error) {
 
 func (l *entryLog) getCommittedEntries(low uint64,
 	high uint64, maxSize uint64) ([]pb.Entry, error) {
-	if low < l.firstIndex() || low > l.committed {
+	if low > l.committed {
 		return nil, ErrCompacted
 	}
 	high = min(high, l.committed+1)
@@ -287,6 +293,10 @@ func (l *entryLog) getCommittedEntries(low uint64,
 		return nil, nil
 	}
 	return l.getEntries(low, high, maxSize)
+}
+
+func (l *entryLog) getLsnByTs(ts time.Time) (uint64, error) {
+	return l.logdb.GetLsnByTs(ts)
 }
 
 func (l *entryLog) entriesToSave() []pb.Entry {

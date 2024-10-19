@@ -39,7 +39,7 @@ func benchmarkWrite(b *testing.B, sz int) {
 			b.Fatalf("failed to remove dir %v", err)
 		}
 	}()
-	db, err := open("test-db", benchmarkTestDirname, opts)
+	db, err := open(1, 1, "test-db", benchmarkTestDirname, opts)
 	if err != nil {
 		b.Fatalf("failed to open db %v", err)
 	}

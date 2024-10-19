@@ -23,15 +23,15 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/errors"
-	"github.com/lni/goutils/leaktest"
-	"github.com/lni/vfs"
-	"github.com/stretchr/testify/require"
-
 	"github.com/lni/dragonboat/v4/internal/fileutil"
 	"github.com/lni/dragonboat/v4/raftio"
 	pb "github.com/lni/dragonboat/v4/raftpb"
+	"github.com/lni/goutils/leaktest"
+	"github.com/lni/vfs"
+	"github.com/stretchr/testify/require"
 )
 
 func runTanTest(t *testing.T, opts *Options, tf func(t *testing.T, d *db), fs vfs.FS) {
@@ -48,7 +48,7 @@ func runTanTest(t *testing.T, opts *Options, tf func(t *testing.T, d *db), fs vf
 	defer vfs.ReportLeakedFD(opts.FS, t)
 	dirname := "/Users/lni/db-dir"
 	require.NoError(t, fileutil.MkdirAll(dirname, opts.FS))
-	db, err := open(dirname, dirname, opts)
+	db, err := open(1, 1, dirname, dirname, opts)
 	require.NoError(t, err)
 	defer func() {
 		plog.Infof("going to close")
@@ -465,7 +465,7 @@ func TestDBConcurrentAccess(t *testing.T) {
 	}
 	dirname := "db-dir"
 	require.NoError(t, fs.MkdirAll(dirname, 0700))
-	db, err := open(dirname, dirname, opts)
+	db, err := open(1, 1, dirname, dirname, opts)
 	require.NoError(t, err)
 	defer db.close()
 	var wg sync.WaitGroup
@@ -625,7 +625,7 @@ func TestRebuildLog(t *testing.T) {
 	defer func() {
 		require.NoError(t, fs.RemoveAll(dirname))
 	}()
-	db, err := open(dirname, dirname, opts)
+	db, err := open(1, 1, dirname, dirname, opts)
 	require.NoError(t, err)
 	buf := make([]byte, 1024)
 	for i := uint64(1); i <= uint64(20); i++ {
@@ -651,7 +651,7 @@ func TestRebuildLog(t *testing.T) {
 	require.NoError(t, lf.Truncate(fi.Size()-16))
 	require.NoError(t, lf.Close())
 	require.NoError(t, fs.RemoveAll(idxFn))
-	db, err = open(dirname, dirname, opts)
+	db, err = open(1, 1, dirname, dirname, opts)
 	require.NoError(t, err)
 	var result []pb.Entry
 	result, _, err = db.getEntries(2, 3, result, 0, 1, 21, math.MaxUint64)
@@ -739,4 +739,66 @@ func TestWriteWithInvalidState(t *testing.T) {
 		}
 		runTanTest(t, nil, tf, fs)
 	}
+}
+
+func TestLoadArchivedNodeStates(t *testing.T) {
+	fs := vfs.NewMem()
+	tf1 := func(t *testing.T, db *db) {
+		_, err := db.loadArchivedNodeStates()
+		require.Error(t, err)
+	}
+	runTanTest(t, nil, tf1, fs)
+
+	opts := &Options{
+		MaxManifestFileSize: MaxManifestFileSize,
+		MaxLogFileSize:      32,
+		FS:                  fs,
+		archiveIO:           newMockArchiveIO(fs, "db-dir"),
+	}
+	tf2 := func(t *testing.T, db *db) {
+		buf := make([]byte, 1024)
+		hs := pb.State{
+			Term:   2,
+			Vote:   3,
+			Commit: 100,
+		}
+		for i := uint64(0); i < 10; i++ {
+			e2 := pb.Entry{
+				Term:  2,
+				Index: i + 1,
+				Type:  pb.ApplicationEntry,
+				Cmd:   []byte("test data 2"),
+			}
+			ud := pb.Update{
+				EntriesToSave: []pb.Entry{e2},
+				State:         hs,
+				ShardID:       1,
+				ReplicaID:     1,
+			}
+			_, err := db.write(ud, buf)
+			require.NoError(t, err)
+		}
+		require.NoError(t, db.removeEntries(1, 1, 100))
+
+		timeout := time.NewTimer(time.Second * 3)
+		defer timeout.Stop()
+		ticker := time.NewTicker(time.Millisecond * 10)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-timeout.C:
+				panic("failed to get lsn by ts")
+
+			case <-ticker.C:
+				ns, err := db.loadArchivedNodeStates()
+				require.NoError(t, err)
+				ies, ok := ns.query(1, 1, 1, 100)
+				require.True(t, ok)
+				if len(ies) == 9 {
+					return
+				}
+			}
+		}
+	}
+	runTanTest(t, opts, tf2, fs)
 }

@@ -17,8 +17,10 @@ package config
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/lni/dragonboat/v4/raftio"
+	"github.com/stretchr/testify/assert"
 )
 
 func ExampleNodeHostConfig() {
@@ -293,4 +295,22 @@ func TestDefaultEngineConfig(t *testing.T) {
 	if !reflect.DeepEqual(&nhc.Expert.Engine, &ec) {
 		t.Errorf("default engine configure not set")
 	}
+}
+
+func TestRecordItemCodec(t *testing.T) {
+	ts := time.Now()
+	item := RecordItem{
+		FileNum:  12,
+		TS:       ts,
+		FirstLsn: 22,
+	}
+	data, err := item.Marshal()
+	assert.NoError(t, err)
+
+	var item2 RecordItem
+	err = item2.Unmarshal(data)
+	assert.NoError(t, err)
+	assert.Equal(t, 12, int(item2.FileNum))
+	assert.True(t, ts.Equal(item2.TS))
+	assert.Equal(t, 22, int(item2.FirstLsn))
 }

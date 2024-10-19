@@ -17,6 +17,7 @@ package tan
 import (
 	"bufio"
 	"bytes"
+	"io"
 
 	"github.com/lni/dragonboat/v4/raftio"
 	pb "github.com/lni/dragonboat/v4/raftpb"
@@ -143,14 +144,7 @@ func (s *nodeStates) save(dirname string,
 	return nil
 }
 
-func (s *nodeStates) load(dirname string, fn fileNum, fs vfs.FS) (err error) {
-	file, err := fs.Open(makeFilename(fs, dirname, fileTypeIndex, fn))
-	if err != nil {
-		return err
-	}
-	defer func() {
-		err = firstError(err, file.Close())
-	}()
+func (s *nodeStates) load(file io.ReadCloser) (err error) {
 	r := newReader(file, fileNum(0))
 	rr, err := r.next()
 	if err != nil {
@@ -278,4 +272,17 @@ func (s *nodeStates) getObsolete(fns []fileNum) []fileNum {
 		}
 	}
 	return result
+}
+
+func (s *nodeStates) mergeStates(s1 *nodeStates) error {
+	for nodeInfo, nodeIndex := range s.indexes {
+		n1, ok := s1.indexes[nodeInfo]
+		if !ok {
+			continue
+		}
+		if err := nodeIndex.entries.merge(&n1.entries); err != nil {
+			return err
+		}
+	}
+	return nil
 }

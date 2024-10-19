@@ -152,7 +152,7 @@ func (d *db) notifyDeleteObsoleteWorker() {
 func (d *db) deleteObsoleteWorkerMain() {
 	for {
 		select {
-		case <-d.deleteobsoleteWorker.ShouldStop():
+		case <-d.stopper.ShouldStop():
 			return
 		case <-d.deleteObsoleteCh:
 			if err := d.deleteObsoleteFiles(); err != nil {
@@ -160,6 +160,30 @@ func (d *db) deleteObsoleteWorkerMain() {
 			}
 		}
 	}
+}
+
+func (d *db) archiveFiles(files []*fileMetadata) error {
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].fileNum < files[j].fileNum
+	})
+	logNums := make([]uint64, 0, len(files))
+	for _, file := range files {
+		filePath := makeFilename(d.opts.FS, d.dirname, fileTypeLog, file.fileNum)
+		indexFilePath := makeFilename(d.opts.FS, d.dirname, fileTypeIndex, file.fileNum)
+		// before we delete the local log file, write the file to remote
+		// storage to archive it.
+		if err := d.archiver.Write(d.archiver.ctx, d.archiver.subDir, filePath); err != nil {
+			return err
+		}
+		if err := d.archiver.Write(d.archiver.ctx, d.archiver.subDir, indexFilePath); err != nil {
+			return err
+		}
+
+		// logNums is not needed, as we check a log file's status of commit by
+		// checking if it exists in the directory.
+		logNums = append(logNums, uint64(file.fileNum))
+	}
+	return nil
 }
 
 func (d *db) deleteObsoleteFiles() error {
@@ -176,6 +200,14 @@ func (d *db) deleteObsoleteFiles() error {
 			return err
 		}
 	}
+
+	if d.archiver.isActive() {
+		// we need archive logs before remove them.
+		if err := d.archiveFiles(obsoleteTables); err != nil {
+			return err
+		}
+	}
+
 	for _, meta := range obsoleteTables {
 		filename := makeFilename(d.opts.FS, d.dirname, fileTypeLog, meta.fileNum)
 		indexFilename := makeFilename(d.opts.FS, d.dirname, fileTypeIndex, meta.fileNum)

@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/lni/goutils/logutil"
@@ -339,4 +340,14 @@ func (t *LogDB) CompactEntriesTo(shardID uint64,
 		}
 	})
 	return done, nil
+}
+
+func (t *LogDB) ArchiveEnabled() bool {
+	return t.odb.ArchiveEnabled() && t.ndb.ArchiveEnabled()
+}
+
+func (t *LogDB) GetLsnByTs(shardID uint64, replicaID uint64, ts time.Time) (uint64, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.odb.GetLsnByTs(shardID, replicaID, ts)
 }

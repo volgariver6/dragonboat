@@ -450,6 +450,12 @@ func (n *noopLogDB) GetSnapshot(shardID uint64, replicaID uint64) (pb.Snapshot, 
 func (n *noopLogDB) ImportSnapshot(snapshot pb.Snapshot, replicaID uint64) error {
 	return nil
 }
+func (n *noopLogDB) ArchiveEnabled() bool {
+	return false
+}
+func (n *noopLogDB) GetLsnByTs(shardID uint64, replicaID uint64, ts time.Time) (uint64, error) {
+	return 0, nil
+}
 
 type updateConfig func(*config.Config) *config.Config
 type updateNodeHostConfig func(*config.NodeHostConfig) *config.NodeHostConfig

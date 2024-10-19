@@ -16,6 +16,7 @@ package raft
 
 import (
 	"math"
+	"time"
 
 	pb "github.com/lni/dragonboat/v4/raftpb"
 )
@@ -174,4 +175,12 @@ func (db *TestLogDB) Compact(index uint64) error {
 	db.markerIndex = index
 	db.markerTerm = term
 	return nil
+}
+
+func (db *TestLogDB) ArchiveEnabled() bool {
+	return false
+}
+
+func (db *TestLogDB) GetLsnByTs(ts time.Time) (uint64, error) {
+	return 0, nil
 }
