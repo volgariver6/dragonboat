@@ -371,7 +371,7 @@ func (env *Env) tryLockNodeHostDir(dir string) error {
 	if _, ok := env.flocks[fp]; !ok {
 		c, err := env.fs.Lock(fp)
 		if err != nil {
-			return ErrLockDirectory
+			return fmt.Errorf("%v: %s", ErrLockDirectory, err)
 		}
 		env.flocks[fp] = c
 	}
